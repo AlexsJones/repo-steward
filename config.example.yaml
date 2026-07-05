@@ -1,0 +1,31 @@
+# Repo Steward configuration — copy to config.yaml and edit.
+# The steward re-reads this every tick, so changes apply without restarts.
+
+mode: draft            # draft = stage all outbound GitHub actions, post nothing.
+                       # live  = post reviews/replies/labels autonomously.
+draft_until: 2099-01-01  # while mode=draft, the steward escalates a go/no-go on this date
+
+autonomy: full         # full = reviews, triage replies, labels, and bug-fix PRs
+                       # (fix PRs pushed as steward branches, never merged)
+
+# Full owner/repo names. priority: high repos are worked first each tick.
+repos:
+  - name: your-github-user/your-hot-repo
+    priority: high
+  - name: your-org/another-repo
+    priority: medium
+  - name: your-github-user/quiet-repo
+    priority: low
+
+limits:
+  substantive_items_per_tick: 4   # deep PR reviews / repro attempts / fix PRs
+  light_items_per_tick: 12        # labels, triage classification, delta re-reviews
+  max_fix_prs_open: 3             # steward-authored fix PRs in flight at once
+
+dashboard:
+  html: dashboard.html
+  artifact_url: ""     # optional claude.ai artifact mirror; leave empty to disable
+
+# Appended to every comment/review the steward posts in live mode, so
+# contributors know it's a bot and maintainers can audit its output.
+signature: "🤝 _Handled by the maintainer's repo steward — replies reviewed by [@your-github-user](https://github.com/your-github-user)_"

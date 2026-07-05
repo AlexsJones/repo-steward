@@ -1,0 +1,12 @@
+# Personal deployment state — everything specific to one maintainer's install.
+config.yaml
+state/
+logs/
+work/
+metrics.jsonl
+escalations.md
+approvals.jsonl
+dashboard.html
+.claude/settings.local.json
+__pycache__/
+tmp/
