@@ -6,6 +6,7 @@ work/
 metrics.jsonl
 escalations.md
 approvals.jsonl
+usage.jsonl
 dashboard.html
 .claude/settings.local.json
 __pycache__/

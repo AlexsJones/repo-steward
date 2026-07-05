@@ -41,9 +41,10 @@ After=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=$STEWARD_HOME
-ExecStart=$CLAUDE_BIN -p$MODEL_FLAG "Read $STEWARD_HOME/STEWARD.md and execute one steward tick, following it exactly."
-TimeoutStartSec=2700
-StandardOutput=append:$STEWARD_HOME/logs/tick.log
+Environment=CLAUDE_BIN=$CLAUDE_BIN
+${STEWARD_MODEL:+Environment=STEWARD_MODEL=$STEWARD_MODEL}
+ExecStart=$STEWARD_HOME/tick.sh
+TimeoutStartSec=5400
 StandardError=append:$STEWARD_HOME/logs/tick.log
 EOF
 

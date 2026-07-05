@@ -1,0 +1,295 @@
+<meta charset="utf-8">
+<title>Repo Steward — Metrics</title>
+<meta http-equiv="refresh" content="300">
+<style>
+  :root {
+    --bg: #EFF2F0; --panel: #FBFCFB; --panel-2: #F3F6F4;
+    --ink: #1C2321; --muted: #5C6B66; --line: #D8DFDB;
+    --accent: #175E54; --accent-soft: #E3EEEB;
+    --s1: #0B7D5E; --s2: #3A5FA8; --s3: #9D4A87;
+    --warn: #A66A1E; --warn-soft: #F5ECDC;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111614; --panel: #181F1C; --panel-2: #1D2622;
+      --ink: #E4EAE7; --muted: #8CA097; --line: #2A342F;
+      --accent: #4FB39F; --accent-soft: #1B322D;
+      --s1: #149B77; --s2: #5E86E8; --s3: #C75B9F;
+      --warn: #D19A4A; --warn-soft: #33281A;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #EFF2F0; --panel: #FBFCFB; --panel-2: #F3F6F4;
+    --ink: #1C2321; --muted: #5C6B66; --line: #D8DFDB;
+    --accent: #175E54; --accent-soft: #E3EEEB;
+    --s1: #0B7D5E; --s2: #3A5FA8; --s3: #9D4A87;
+    --warn: #A66A1E; --warn-soft: #F5ECDC;
+  }
+  :root[data-theme="dark"] {
+    --bg: #111614; --panel: #181F1C; --panel-2: #1D2622;
+    --ink: #E4EAE7; --muted: #8CA097; --line: #2A342F;
+    --accent: #4FB39F; --accent-soft: #1B322D;
+    --s1: #149B77; --s2: #5E86E8; --s3: #C75B9F;
+    --warn: #D19A4A; --warn-soft: #33281A;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; padding: 0 20px 64px; }
+  main { max-width: 1100px; margin: 0 auto; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px 20px; padding: 28px 0 18px; border-bottom: 2px solid var(--accent); margin-bottom: 28px; }
+  h1 { font-family: "Iowan Old Style", Palatino, "Palatino Linotype", Georgia, serif; font-size: 28px; font-weight: 600; margin: 0; }
+  header a { margin-left: auto; font: 600 12px ui-monospace, Menlo, monospace; color: var(--accent); text-decoration: none; }
+  header a:hover { text-decoration: underline; }
+  section { margin-bottom: 36px; }
+  h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin: 0 0 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; }
+  .empty { color: var(--muted); font-size: 14px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  .tile .v { font: 600 26px/1.2 ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .tile .k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin-top: 2px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+  .chart-title { font-size: 13px; font-weight: 600; margin: 0 0 2px; }
+  .chart-sub { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  svg text { font: 11px ui-monospace, "SF Mono", Menlo, monospace; fill: var(--muted); }
+  svg .vlabel { fill: var(--ink); font-weight: 600; }
+  svg .grid { stroke: var(--line); stroke-width: 1; }
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 13.5px; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 600; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--panel-2); }
+  th.r, td.r { text-align: right; }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  tbody tr:last-child td { border-bottom: none; }
+  #tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--bg); font: 12px/1.5 ui-monospace, Menlo, monospace; padding: 6px 9px; border-radius: 6px; opacity: 0; transition: opacity .1s; z-index: 10; max-width: 280px; }
+</style>
+
+<main>
+  <header>
+    <h1>Steward Metrics</h1>
+    <a href="/dashboard.html">← dashboard</a>
+  </header>
+
+  <section>
+    <h2>Totals</h2>
+    <div class="tiles" id="tiles"></div>
+  </section>
+
+  <section>
+    <h2>Tokens &amp; cost per tick</h2>
+    <div class="card" id="usageChart"></div>
+  </section>
+
+  <section>
+    <h2>Steward attention by repo</h2>
+    <div class="card" id="attnChart"></div>
+  </section>
+
+  <section>
+    <h2>Open items over time</h2>
+    <div class="grid2" id="repoTrends"></div>
+  </section>
+
+  <section>
+    <h2>Per-repo table</h2>
+    <div class="tablewrap" id="repoTable"></div>
+  </section>
+</main>
+<div id="tip"></div>
+
+<script>
+(function () {
+  var css = getComputedStyle(document.documentElement);
+  function tok(n) { return css.getPropertyValue(n).trim(); }
+  var tip = document.getElementById('tip');
+  function showTip(ev, html) {
+    tip.innerHTML = html; tip.style.opacity = 1;
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - 300) + 'px';
+    tip.style.top = (ev.clientY + 14) + 'px';
+  }
+  function hideTip() { tip.style.opacity = 0; }
+
+  function fmt(n) {
+    if (n == null) return '–';
+    if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+    return String(Math.round(n));
+  }
+  function usd(n) { return n == null ? '–' : '$' + n.toFixed(2); }
+  function day(ts) { return ts.slice(5, 10); }
+  function hm(ts) { return ts.slice(11, 16); }
+
+  fetch('/api/metrics').then(function (r) { return r.json(); }).then(render)
+    .catch(function () {
+      document.getElementById('tiles').innerHTML =
+        '<div class="card empty">API unreachable — this page needs to be served by server.py.</div>';
+    });
+
+  function render(data) {
+    var usage = (data.usage || []).filter(function (u) { return !u.error; });
+    var metrics = data.metrics || [];
+
+    // ---- totals ----
+    var totTok = 0, totCost = 0, totOut = 0;
+    usage.forEach(function (u) {
+      totTok += (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_read_tokens || 0) + (u.cache_creation_tokens || 0);
+      totOut += (u.output_tokens || 0);
+      totCost += (u.cost_usd || 0);
+    });
+    var byRepo = {};
+    metrics.forEach(function (m) {
+      var r = byRepo[m.repo] = byRepo[m.repo] || { rows: [], actions: 0, newIn: 0, closedOut: 0 };
+      r.rows.push(m);
+      r.actions += m.steward_actions || 0;
+      r.newIn += (m.new_issues || 0) + (m.new_prs || 0);
+      r.closedOut += (m.closed_issues || 0) + (m.merged_prs || 0);
+    });
+    var repos = Object.keys(byRepo);
+    repos.forEach(function (k) { byRepo[k].rows.sort(function (a, b) { return a.ts < b.ts ? -1 : 1; }); });
+    var totalActions = repos.reduce(function (s, k) { return s + byRepo[k].actions; }, 0);
+    var ticks = new Set(metrics.map(function (m) { return m.ts; })).size;
+
+    document.getElementById('tiles').innerHTML = [
+      ['<span class="mono">' + fmt(totTok) + '</span>', 'total tokens'],
+      ['<span class="mono">' + fmt(totOut) + '</span>', 'output tokens'],
+      ['<span class="mono">' + usd(totCost) + '</span>', 'total cost'],
+      ['<span class="mono">' + usage.length + '</span>', 'ticks measured'],
+      ['<span class="mono">' + totalActions + '</span>', 'steward actions'],
+      ['<span class="mono">' + ticks + '</span>', 'snapshots'],
+    ].map(function (t) { return '<div class="tile"><div class="v">' + t[0] + '</div><div class="k">' + t[1] + '</div></div>'; }).join('');
+
+    // ---- tokens per tick (bar, single series; tooltip = breakdown) ----
+    var uc = document.getElementById('usageChart');
+    if (!usage.length) {
+      uc.innerHTML = '<p class="empty">No usage recorded yet — token capture starts with the next tick (recorded by tick.sh into usage.jsonl).</p>';
+    } else {
+      var W = 1040, H = 180, P = { l: 46, r: 8, t: 12, b: 22 };
+      var rows = usage.slice(-40);
+      var max = Math.max.apply(null, rows.map(function (u) {
+        return (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_read_tokens || 0) + (u.cache_creation_tokens || 0);
+      })) || 1;
+      var bw = Math.min(34, (W - P.l - P.r) / rows.length - 2);
+      var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="Total tokens per tick">';
+      [0, 0.5, 1].forEach(function (f) {
+        var y = P.t + (1 - f) * (H - P.t - P.b);
+        svg += '<line class="grid" x1="' + P.l + '" x2="' + (W - P.r) + '" y1="' + y + '" y2="' + y + '"/>' +
+               '<text x="' + (P.l - 6) + '" y="' + (y + 3) + '" text-anchor="end">' + fmt(max * f) + '</text>';
+      });
+      rows.forEach(function (u, i) {
+        var tot = (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_read_tokens || 0) + (u.cache_creation_tokens || 0);
+        var x = P.l + i * ((W - P.l - P.r) / rows.length) + 1;
+        var h = Math.max(2, tot / max * (H - P.t - P.b));
+        var y = H - P.b - h;
+        svg += '<rect data-i="' + i + '" x="' + x + '" y="' + y + '" width="' + bw + '" height="' + h +
+               '" rx="4" fill="var(--s1)"/>' +
+               '<text x="' + (x + bw / 2) + '" y="' + (H - 6) + '" text-anchor="middle">' + hm(u.ts) + '</text>';
+      });
+      svg += '</svg>';
+      uc.innerHTML = '<p class="chart-sub">One bar per tick · hover for the input/output/cache breakdown, cost, and duration</p>' + svg;
+      uc.querySelectorAll('rect').forEach(function (r) {
+        r.addEventListener('mousemove', function (ev) {
+          var u = rows[+r.dataset.i];
+          showTip(ev, u.ts.replace('T', ' ').replace('Z', ' UTC') +
+            '<br>in ' + fmt(u.input_tokens) + ' · out ' + fmt(u.output_tokens) +
+            '<br>cache read ' + fmt(u.cache_read_tokens) + ' · write ' + fmt(u.cache_creation_tokens) +
+            '<br>cost ' + usd(u.cost_usd) + ' · ' + (u.duration_ms ? Math.round(u.duration_ms / 60000) + ' min' : '–') +
+            ' · ' + (u.num_turns || '–') + ' turns');
+        });
+        r.addEventListener('mouseleave', hideTip);
+      });
+    }
+
+    // ---- attention by repo (horizontal bars) ----
+    var ac = document.getElementById('attnChart');
+    var ranked = repos.map(function (k) { return { repo: k, actions: byRepo[k].actions, newIn: byRepo[k].newIn }; })
+      .sort(function (a, b) { return b.actions - a.actions || b.newIn - a.newIn; });
+    if (!ranked.length) {
+      ac.innerHTML = '<p class="empty">No snapshots yet.</p>';
+    } else {
+      var maxA = Math.max.apply(null, ranked.map(function (r) { return r.actions; })) || 1;
+      var rh = 26, W2 = 1040, L2 = 150;
+      var svg2 = '<svg viewBox="0 0 ' + W2 + ' ' + (ranked.length * rh + 8) + '" width="100%" role="img" aria-label="Cumulative steward actions per repo">';
+      ranked.forEach(function (r, i) {
+        var y = i * rh + 4;
+        var w = Math.max(2, r.actions / maxA * (W2 - L2 - 60));
+        svg2 += '<text x="' + (L2 - 8) + '" y="' + (y + 15) + '" text-anchor="end">' + r.repo + '</text>' +
+                '<rect data-i="' + i + '" x="' + L2 + '" y="' + y + '" width="' + w + '" height="' + (rh - 8) + '" rx="4" fill="var(--s1)"/>' +
+                '<text class="vlabel" x="' + (L2 + w + 8) + '" y="' + (y + 15) + '">' + r.actions + '</text>';
+      });
+      svg2 += '</svg>';
+      ac.innerHTML = '<p class="chart-sub">Cumulative steward actions (reviews, triage replies, staged items) — the best available proxy for where attention goes; token usage is recorded per tick, not per repo</p>' + svg2;
+      ac.querySelectorAll('rect').forEach(function (r) {
+        r.addEventListener('mousemove', function (ev) {
+          var d = ranked[+r.dataset.i];
+          showTip(ev, d.repo + '<br>' + d.actions + ' steward actions<br>' + d.newIn + ' new items since baseline');
+        });
+        r.addEventListener('mouseleave', hideTip);
+      });
+    }
+
+    // ---- per-repo trends (small multiples, 2 lines each) ----
+    var rt = document.getElementById('repoTrends');
+    var trendRepos = repos.map(function (k) {
+      var last = byRepo[k].rows[byRepo[k].rows.length - 1];
+      return { repo: k, vol: (last.open_issues || 0) + (last.open_prs || 0) };
+    }).sort(function (a, b) { return b.vol - a.vol; }).slice(0, 6);
+    var snaps = Math.max.apply(null, repos.map(function (k) { return byRepo[k].rows.length; }));
+    if (snaps < 3) {
+      rt.innerHTML = '<div class="card empty" style="grid-column:1/-1">Trend lines appear once three snapshots exist — currently ' + snaps + '. Each tick adds one.</div>';
+    } else {
+      rt.innerHTML = trendRepos.map(function (t, ti) {
+        var rows2 = byRepo[t.repo].rows;
+        var W3 = 480, H3 = 140, P3 = { l: 34, r: 46, t: 10, b: 18 };
+        var maxV = Math.max.apply(null, rows2.map(function (m) { return Math.max(m.open_issues || 0, m.open_prs || 0); })) || 1;
+        function pts(key) {
+          return rows2.map(function (m, i) {
+            var x = P3.l + i / Math.max(1, rows2.length - 1) * (W3 - P3.l - P3.r);
+            var y = P3.t + (1 - (m[key] || 0) / maxV) * (H3 - P3.t - P3.b);
+            return [x, y];
+          });
+        }
+        function path(p) { return p.map(function (q, i) { return (i ? 'L' : 'M') + q[0].toFixed(1) + ' ' + q[1].toFixed(1); }).join(''); }
+        var pi = pts('open_issues'), pp = pts('open_prs');
+        var lastI = pi[pi.length - 1], lastP = pp[pp.length - 1];
+        var svg3 = '<svg viewBox="0 0 ' + W3 + ' ' + H3 + '" width="100%" data-ti="' + ti + '" role="img" aria-label="Open issues and PRs over time for ' + t.repo + '">';
+        [0, 1].forEach(function (f) {
+          var y = P3.t + (1 - f) * (H3 - P3.t - P3.b);
+          svg3 += '<line class="grid" x1="' + P3.l + '" x2="' + (W3 - P3.r) + '" y1="' + y + '" y2="' + y + '"/>' +
+                  '<text x="' + (P3.l - 5) + '" y="' + (y + 3) + '" text-anchor="end">' + Math.round(maxV * f) + '</text>';
+        });
+        svg3 += '<path d="' + path(pi) + '" fill="none" stroke="var(--s2)" stroke-width="2"/>' +
+                '<path d="' + path(pp) + '" fill="none" stroke="var(--s1)" stroke-width="2"/>' +
+                '<circle cx="' + lastI[0] + '" cy="' + lastI[1] + '" r="3.5" fill="var(--s2)"/>' +
+                '<circle cx="' + lastP[0] + '" cy="' + lastP[1] + '" r="3.5" fill="var(--s1)"/>' +
+                '<text x="' + (lastI[0] + 7) + '" y="' + (lastI[1] + 3) + '" class="vlabel">' + rows2[rows2.length - 1].open_issues + '</text>' +
+                '<text x="' + (lastP[0] + 7) + '" y="' + (lastP[1] + 3) + '" class="vlabel">' + rows2[rows2.length - 1].open_prs + '</text>' +
+                '<text x="' + P3.l + '" y="' + (H3 - 4) + '">' + day(rows2[0].ts) + '</text>' +
+                '<text x="' + (W3 - P3.r) + '" y="' + (H3 - 4) + '" text-anchor="end">' + day(rows2[rows2.length - 1].ts) + '</text></svg>';
+        return '<div class="card"><p class="chart-title">' + t.repo + '</p>' +
+               '<div class="legend"><span><span class="sw" style="background:var(--s2)"></span>issues</span>' +
+               '<span><span class="sw" style="background:var(--s1)"></span>PRs</span></div>' + svg3 + '</div>';
+      }).join('');
+    }
+
+    // ---- table (accessibility + exact numbers) ----
+    var tbl = document.getElementById('repoTable');
+    var trs = repos.map(function (k) {
+      var rows3 = byRepo[k].rows, last = rows3[rows3.length - 1], first = rows3[0];
+      var dI = (last.open_issues || 0) - (first.open_issues || 0);
+      var dP = (last.open_prs || 0) - (first.open_prs || 0);
+      function delta(n) { return n === 0 ? '±0' : (n > 0 ? '+' + n : String(n)); }
+      return { k: k, last: last, dI: dI, dP: dP, a: byRepo[k].actions, delta: delta };
+    }).sort(function (a, b) { return (b.last.open_issues + b.last.open_prs) - (a.last.open_issues + a.last.open_prs); });
+    tbl.innerHTML = '<table><thead><tr><th>repo</th><th class="r">open issues</th><th class="r">Δ since baseline</th>' +
+      '<th class="r">open PRs</th><th class="r">Δ</th><th class="r">awaiting you</th><th class="r">escalations</th><th class="r">steward actions</th></tr></thead><tbody>' +
+      trs.map(function (r) {
+        return '<tr><td>' + r.k + '</td><td class="r">' + (r.last.open_issues || 0) + '</td><td class="r">' + r.delta(r.dI) +
+               '</td><td class="r">' + (r.last.open_prs || 0) + '</td><td class="r">' + r.delta(r.dP) +
+               '</td><td class="r">' + (r.last.awaiting_maintainer || 0) + '</td><td class="r">' + (r.last.escalations_open || 0) +
+               '</td><td class="r">' + r.a + '</td></tr>';
+      }).join('') + '</tbody></table>';
+  }
+})();
+</script>

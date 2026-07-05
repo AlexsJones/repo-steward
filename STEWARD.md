@@ -104,6 +104,9 @@ Non-negotiable template invariants when regenerating:
   `data-repo="<short-repo>" data-items="<comma-separated ledger keys>"`
   (e.g. `data-repo="myrepo" data-items="pr-579,pr-594"`); the controls script
   derives the approve buttons from these attributes.
+- Keep the `metrics →` link chip in the header statusline. `metrics.html` is a
+  static tracked file that reads live data from `/api/metrics` — never
+  regenerate or edit it during a tick.
 
 If the Artifact tool is available in this session and `dashboard.artifact_url`
 in config is non-empty, additionally publish there (pass it as `url`). If the

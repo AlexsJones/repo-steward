@@ -82,8 +82,25 @@ trend lines. It auto-refreshes; from other devices on your network use
 Pin a model or change cadence via env at install time:
 
 ```bash
+# every half hour on a strong model
 STEWARD_MODEL=claude-opus-4-8 STEWARD_CADENCE="*-*-* *:07,37:00" ./install.sh
+# or one bigger tick each morning (raise `limits` in config.yaml to match)
+STEWARD_CADENCE="*-*-* 07:00:00" ./install.sh
 ```
+
+## Metrics
+
+**http://localhost:8377/metrics.html** tracks the steward itself:
+
+- **Tokens & cost per tick** — every tick runs through `tick.sh`, which
+  captures the Claude Code usage envelope (input/output/cache tokens, cost,
+  duration) into `usage.jsonl`.
+- **Attention by repo** — cumulative steward actions per repo, the proxy for
+  where the steward's effort goes (token usage is measured per tick, not per
+  repo — one session works all repos).
+- **Per-repo trends** — open issues/PRs over time from `metrics.jsonl`
+  snapshots, plus a Δ-since-baseline table, so you can see which repos are
+  heating up and whether the backlog is actually shrinking.
 
 ## The dashboard buttons
 

@@ -99,6 +99,20 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/status":
             return self._json(200, {"tick_active": tick_active(), "mode": steward_mode()})
+        if self.path == "/api/metrics":
+            def read_jsonl(name):
+                p = ROOT / name
+                if not p.exists():
+                    return []
+                out = []
+                for line in p.read_text().splitlines():
+                    try:
+                        out.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+                return out
+            return self._json(200, {"metrics": read_jsonl("metrics.jsonl"),
+                                    "usage": read_jsonl("usage.jsonl")})
         if self.path == "/":
             self.send_response(302)
             self.send_header("Location", "/dashboard.html")
