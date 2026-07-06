@@ -1,4 +1,32 @@
 (function () {
+  // Collapsible sections: every h2 toggles its section's content; state
+  // persists in localStorage so it survives the 5-minute auto-reload.
+  // Pure client behavior — works even on static mirrors, no API needed.
+  document.querySelectorAll('main > section').forEach(function (sec) {
+    var h2 = sec.querySelector('h2');
+    if (!h2) return;
+    var key = 'steward-collapse:' + h2.textContent.replace(/[\d·]+/g, '').trim().toLowerCase();
+    var chev = document.createElement('span');
+    chev.textContent = '▾';
+    chev.style.cssText = 'display:inline-block;margin-right:7px;transition:transform .15s;';
+    h2.insertBefore(chev, h2.firstChild);
+    h2.style.cursor = 'pointer';
+    h2.style.userSelect = 'none';
+    var collapsed = localStorage.getItem(key) === '1';
+    function apply() {
+      Array.prototype.forEach.call(sec.children, function (c) {
+        if (c !== h2) c.style.display = collapsed ? 'none' : '';
+      });
+      chev.style.transform = collapsed ? 'rotate(-90deg)' : '';
+    }
+    apply();
+    h2.addEventListener('click', function () {
+      collapsed = !collapsed;
+      localStorage.setItem(key, collapsed ? '1' : '0');
+      apply();
+    });
+  });
+
   // Controls only render when the steward API answers (i.e. served by server.py,
   // not a static mirror such as a claude.ai artifact).
   fetch('/api/status').then(function (r) { if (r.ok) return r.json(); throw 0; })
