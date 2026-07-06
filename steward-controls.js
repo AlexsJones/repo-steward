@@ -5,19 +5,25 @@
     .then(function (s) { init(s); }).catch(function () {});
 
   function init(initial) {
+  var header = document.querySelector('header');
   var statusline = document.querySelector('.statusline');
+
+  // Layout: controls (mode toggle + run button) sit on the title row, top
+  // right; the chip row gets the full width below and never mixes with them.
+  statusline.style.flexBasis = '100%';
+  statusline.style.marginLeft = '0';
 
   // Mode toggle: replaces any statically-rendered draft chip. Clicking flips
   // draft <-> live via /api/mode (config.yaml is the source of truth).
   var stale = document.querySelector('.chip.draft');
   if (stale) stale.remove();
   var modeChip = document.createElement('button');
-  modeChip.className = 'chip';
-  statusline.insertBefore(modeChip, statusline.firstChild);
+  header.insertBefore(modeChip, statusline);
   function paintMode(mode) {
     var draft = mode !== 'live';
     modeChip.textContent = draft ? 'DRAFT — click to go live' : 'LIVE — click for draft';
-    modeChip.style.cssText = 'cursor:pointer;border-color:transparent;' + (draft
+    modeChip.style.cssText = 'font:600 12px ui-monospace,Menlo,monospace;padding:9px 14px;' +
+      'border-radius:8px;border:none;cursor:pointer;margin-left:auto;align-self:center;flex-shrink:0;' + (draft
       ? 'background:var(--warn-soft);color:var(--warn);'
       : 'background:var(--ok-soft);color:var(--ok);');
     modeChip.dataset.mode = draft ? 'draft' : 'live';
@@ -65,13 +71,13 @@
   // as the tick status indicator (no separate "idle" chip).
   var btn = document.createElement('button');
   var btnBase = 'font:600 14px system-ui,-apple-system,sans-serif;padding:10px 20px;' +
-    'border-radius:8px;border:none;letter-spacing:.01em;margin-left:16px;align-self:center;flex-shrink:0;';
+    'border-radius:8px;border:none;letter-spacing:.01em;margin-left:10px;align-self:center;flex-shrink:0;';
   function styleBtn(busy) {
     btn.style.cssText = btnBase + (busy
       ? 'background:var(--warn-soft);color:var(--warn);cursor:default;'
       : 'background:var(--accent);color:var(--panel);cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.25);');
   }
-  document.querySelector('header').appendChild(btn);
+  header.insertBefore(btn, statusline);
 
   function setBusy(busy) {
     btn.disabled = busy;
