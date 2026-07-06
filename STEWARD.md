@@ -110,17 +110,30 @@ Append one line per repo to `metrics.jsonl`:
 ```
 
 ### 6. Refresh the dashboard
-Regenerate `dashboard.html` (same visual structure — edit data, keep design):
-- Per-repo cards: open counts, inflow/outflow arrows since last tick.
+Regenerate `dashboard.html` (same visual structure — edit data, keep design).
+
+The **Repositories** section (a `<h2>Repositories</h2>` with a `.fleet` grid of
+`.card.repo` cards, each holding a `.name` with the short repo name and open
+counts) is the page's filter lens — the controls script makes each card
+clickable to focus every section on that repo, and injects the "All
+repositories" card, the slim decisions alert, per-card attention badges, and
+the filter bar. So: keep the cards' `.name` and counts, keep every filterable
+item's repo identity discoverable (a PR/issue link in the row, an in-flight
+group-header `.grouprow` per repo, or `data-repo` on staged blocks), and give
+EVERY filterable section heading a `<span class="count">· N</span>` so the
+count updates when filtered. Do not hand-render the alert/filter bar/All card.
+
 The sections are role-based and MUST NOT overlap — each staged item appears in
 exactly one of them:
-- **Decisions needed** (escalations) — top of page, most prominent. Things the
-  maintainer must choose between; not postable until they decide.
+- **Decisions needed** (escalations) — most prominent. Things the maintainer
+  must choose between; not postable until they decide. Each `.decision` block
+  keeps a link to its repo so the lens can filter it.
 - **Ready for your final look** — PRs at `approve-recommend` ONLY, one row each
   with the steward's rationale. This is the recommend-to-merge shortlist; the
   row's ⌄ expander shows the full staged review, so these are NOT repeated in
   Staged replies below.
-- In-flight table: item, state, iterations, last steward action, next step.
+- In-flight table: item, state, iterations, last steward action, next step;
+  grouped by repo with a `.grouprow` header per repo (the lens reads these).
 - **Staged replies** (draft mode) — every OTHER drafted outbound message this
   tick that is not an `approve-recommend` and not itself an escalation
   decision: triage replies to contributors, change-request reviews, and the
@@ -138,9 +151,10 @@ Non-negotiable template invariants when regenerating:
   (server sends no charset header; without the meta tag text renders as mojibake).
 - Keep `<script id="steward-controls" src="/steward-controls.js"></script>` at
   the end of the file — it renders the "Run tick now" button, live site-status
-  chips, and per-item "Approve & post" buttons against server.py's /api
-  endpoints. The script is a tracked repo file; never inline or modify it
-  during a tick.
+  chips, per-item "Approve & post" buttons, and the Repositories filter lens
+  (click-to-focus, decisions alert, filter bar) against server.py's /api
+  endpoints and the section structure above. The script is a tracked repo file;
+  never inline or modify it during a tick.
 - Every staged `<details class="staged">` block MUST carry
   `data-repo="<short-repo>" data-items="<comma-separated ledger keys>"`
   (e.g. `data-repo="myrepo" data-items="pr-579,pr-594"`); the controls script

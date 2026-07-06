@@ -1,4 +1,143 @@
 (function () {
+  // Repository filter lens: the Repositories row becomes the page's filter.
+  // Clicking a repo focuses every section (Decisions, Ready, In flight, Staged)
+  // on that repo. Works by deriving each item's repo from data-repo, its PR/issue
+  // link, or the in-flight group header — so it runs on the current dashboard
+  // without waiting for a regenerated one.
+  initRepoFilter();
+  function initRepoFilter() {
+    var main = document.querySelector('main');
+    if (!main) return;
+    function heading(re) {
+      return Array.prototype.slice.call(main.querySelectorAll('section'))
+        .filter(function (s) { var h = s.querySelector('h2'); return h && re.test(h.textContent); })[0];
+    }
+    var secRepos = heading(/^\s*(fleet|repositories)/i);
+    if (!secRepos) return;
+    var secDec = heading(/decisions/i), secReady = heading(/ready for/i),
+        secFlight = heading(/in flight/i), secStaged = heading(/staged/i);
+    function shortRepo(href) { var m = href && href.match(/github\.com\/[^/]+\/([^/]+)/); return m ? m[1] : null; }
+
+    var css = document.createElement('style');
+    css.textContent =
+      'section.flt-empty > *:not(h2):not(.empty-note){display:none!important}' +
+      '.empty-note{display:none;color:var(--muted);font-size:13px;padding:10px 2px}' +
+      'section.flt-empty .empty-note{display:block}' +
+      '.card.repo{cursor:pointer;transition:opacity .12s,border-color .12s,background .12s}' +
+      '.card.repo:hover{border-color:var(--accent)}' +
+      '.card.repo.sel{border-color:var(--accent);background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--accent)}' +
+      '.card.repo.dim{opacity:.4}' +
+      '.rbadges{display:flex;gap:5px;flex-wrap:wrap;margin-top:3px}' +
+      '.rb{font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:999px}' +
+      '.rb.dec{background:var(--crit-soft);color:var(--crit)}' +
+      '.rb.stg{background:var(--accent-soft);color:var(--accent)}' +
+      '.rb.fl{background:var(--neutral-soft);color:var(--muted)}' +
+      '.lens-hint{font-size:12px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0;margin-left:10px}' +
+      '.fbar{display:none;align-items:center;gap:12px;background:var(--accent-soft);border:1px solid var(--accent);border-radius:9px;padding:9px 14px;margin:0 0 24px;font-size:13.5px}' +
+      '.fbar.on{display:flex}.fbar b{color:var(--accent)}' +
+      '.fbar .clear{margin-left:auto;font:600 12px ui-monospace,Menlo,monospace;color:var(--accent);background:transparent;border:1px solid var(--accent);border-radius:7px;padding:5px 11px;cursor:pointer}' +
+      '.dec-alert{display:none;align-items:center;gap:10px;background:var(--crit-soft);color:var(--crit);border:1px solid var(--crit);border-radius:9px;padding:9px 15px;margin:0 0 22px;font:600 13.5px system-ui,-apple-system,sans-serif}' +
+      '.dec-alert.on{display:flex}' +
+      '.dec-alert button{margin-left:auto;font:600 12px ui-monospace,Menlo,monospace;background:transparent;border:1px solid var(--crit);color:var(--crit);border-radius:7px;padding:4px 11px;cursor:pointer}';
+    document.head.appendChild(css);
+
+    // Tag every filterable item with its repo (derive where not explicit).
+    function tag(el, repo) { if (repo && !el.dataset.repo) el.dataset.repo = repo; el.setAttribute('data-flt', ''); }
+    if (secDec) secDec.querySelectorAll('.decision').forEach(function (d) { var a = d.querySelector('a[href]'); tag(d, a && shortRepo(a.getAttribute('href'))); });
+    if (secReady) secReady.querySelectorAll('tbody tr').forEach(function (r) { if (!r.querySelector('td')) return; var a = r.querySelector('a[href]'); tag(r, a && shortRepo(a.getAttribute('href'))); });
+    if (secFlight) { var cur = null; secFlight.querySelectorAll('tbody tr').forEach(function (r) {
+        if (r.classList.contains('grouprow')) { cur = r.textContent.trim(); r.dataset.repo = cur; r.setAttribute('data-grp', ''); return; }
+        var a = r.querySelector('a[href]'); tag(r, (a && shortRepo(a.getAttribute('href'))) || cur);
+      }); }
+    if (secStaged) secStaged.querySelectorAll('details.staged').forEach(function (d) { d.setAttribute('data-flt', ''); });
+
+    var flt = [secDec, secReady, secFlight, secStaged].filter(Boolean);
+    flt.forEach(function (s) {
+      s.setAttribute('data-filterable', '');
+      var note = document.createElement('div');
+      note.className = 'empty-note';
+      note.textContent = 'Nothing here for this repository.';
+      s.appendChild(note);
+    });
+
+    function itemsIn(sec, repo) {
+      if (!sec) return 0;
+      return Array.prototype.slice.call(sec.querySelectorAll('[data-flt]'))
+        .filter(function (e) { return !repo || e.dataset.repo === repo; }).length;
+    }
+
+    // Rename heading + add hint (runs before the collapsible pass adds a chevron).
+    var h = secRepos.querySelector('h2');
+    if (h) h.innerHTML = 'Repositories <span class="lens-hint">Click a repository to focus the page on its work</span>';
+
+    // Attention badges + click on each repo card; build an "All" card.
+    var grid = secRepos.querySelector('.fleet') || secRepos;
+    var cards = Array.prototype.slice.call(secRepos.querySelectorAll('.card.repo'));
+    cards.forEach(function (card) {
+      var nameEl = card.querySelector('.name');
+      var repo = nameEl ? nameEl.textContent.trim() : null;
+      card.dataset.repoName = repo || '';
+      var dec = itemsIn(secDec, repo), stg = itemsIn(secStaged, repo), fl = itemsIn(secFlight, repo);
+      if (dec + stg + fl > 0) {
+        var bad = document.createElement('div');
+        bad.className = 'rbadges';
+        if (dec) bad.innerHTML += '<span class="rb dec">' + dec + ' dec</span>';
+        if (stg) bad.innerHTML += '<span class="rb stg">' + stg + ' staged</span>';
+        if (fl) bad.innerHTML += '<span class="rb fl">' + fl + ' in flight</span>';
+        card.appendChild(bad);
+      }
+    });
+    var allCard = document.createElement('div');
+    allCard.className = 'card repo sel';
+    allCard.dataset.repoName = '';
+    allCard.innerHTML = '<span class="name">All repositories</span><span class="quiet">the whole fleet</span>';
+    grid.insertBefore(allCard, grid.firstChild);
+    var allCards = [allCard].concat(cards);
+
+    // Slim decisions alert (urgency-first) + filter context bar.
+    var decAlert = document.createElement('div');
+    decAlert.className = 'dec-alert';
+    decAlert.innerHTML = '<span data-txt></span><button>View decisions ↓</button>';
+    main.insertBefore(decAlert, main.firstChild);
+    main.insertBefore(secRepos, decAlert.nextSibling);
+    var fbar = document.createElement('div');
+    fbar.className = 'fbar';
+    fbar.innerHTML = '<span>Focused on <b data-name></b> — <span data-sum></span></span><button class="clear">✕ All repositories</button>';
+    main.insertBefore(fbar, secRepos.nextSibling);
+    decAlert.querySelector('button').addEventListener('click', function () { if (secDec) secDec.scrollIntoView({ block: 'start', behavior: 'smooth' }); });
+
+    function apply(repo) {
+      allCards.forEach(function (c) {
+        var isSel = (c.dataset.repoName || '') === (repo || '');
+        c.classList.toggle('sel', isSel);
+        c.classList.toggle('dim', !!repo && !isSel && c !== allCard);
+      });
+      document.querySelectorAll('[data-flt]').forEach(function (el) {
+        el.style.display = (!repo || el.dataset.repo === repo) ? '' : 'none';
+      });
+      document.querySelectorAll('[data-grp]').forEach(function (g) { g.style.display = repo ? 'none' : ''; });
+      flt.forEach(function (sec) {
+        var shown = itemsIn(sec, repo);
+        sec.classList.toggle('flt-empty', shown === 0);
+        var cnt = sec.querySelector('h2 .count'); if (cnt) cnt.textContent = '· ' + shown;
+      });
+      var decN = itemsIn(secDec, repo);
+      decAlert.classList.toggle('on', decN > 0);
+      decAlert.querySelector('[data-txt]').textContent = '⚠ ' + decN + (decN === 1 ? ' decision needs' : ' decisions need') + ' you';
+      if (repo) {
+        fbar.classList.add('on');
+        fbar.querySelector('[data-name]').textContent = repo;
+        fbar.querySelector('[data-sum]').textContent = itemsIn(secFlight, repo) + ' in flight · ' + itemsIn(secStaged, repo) + ' staged · ' + decN + ' decisions';
+      } else { fbar.classList.remove('on'); }
+    }
+
+    allCards.forEach(function (c) {
+      c.addEventListener('click', function () { apply(c.dataset.repoName || ''); });
+    });
+    fbar.querySelector('.clear').addEventListener('click', function () { apply(''); });
+    apply('');
+  }
+
   // Collapsible sections: every h2 toggles its section's content; state
   // persists in localStorage so it survives the 5-minute auto-reload.
   // Pure client behavior — works even on static mirrors, no API needed.
