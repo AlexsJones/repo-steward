@@ -26,6 +26,10 @@ and shows its work.
 - **Shows its work** — per-repo queues, staged action texts, token/cost
   metrics, trend lines, and uptime cards, all served from one local process.
 
+<p align="center">
+  <img src="assets/example.png" width="900" alt="The Repo Steward dashboard: decisions needed, PRs ready for final look, fleet overview, and the in-flight queue">
+</p>
+
 ## How it works
 
 ```
