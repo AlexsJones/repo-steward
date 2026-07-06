@@ -1,14 +1,26 @@
 # 🤝 Repo Steward
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f.svg)](LICENSE)
+[![Engine: Claude Code](https://img.shields.io/badge/engine-Claude%20Code%20%7C%20Codex%20%7C%20Gemini%20%7C%20opencode-1d6e62.svg)](#ai-backends)
+
 An autonomous maintainer's assistant for your open-source repos. A scheduled
-[Claude Code](https://claude.com/claude-code) agent triages issues, reviews
-pull requests across multiple iterations, authors bug-fix PRs, and keeps a
-live dashboard of what's happening — escalating only tie-breaks and design
-decisions to you.
+(or button-triggered) coding agent triages issues, reviews pull requests
+across multiple iterations, authors bug-fix PRs, watches your project
+websites, and keeps a live dashboard of what's happening — escalating only
+tie-breaks and design decisions to you.
 
 Built for the maintainer whose day disappears into pasting PR diffs into a
 chat window: the steward does that loop autonomously, across all your repos,
-every hour, and shows its work.
+and shows its work.
+
+- **Draft mode by default** — every review and reply is staged for your
+  approval until you flip the live toggle; nothing speaks for you until it has
+  earned it.
+- **One-click control** — run a tick, approve a staged action, or go live from
+  the dashboard; approvals post under *your* GitHub auth because you clicked.
+- **Hard guardrails** — never merges, never closes, never force-pushes.
+- **Shows its work** — per-repo queues, staged action texts, token/cost
+  metrics, trend lines, and uptime cards, all served from one local process.
 
 ## How it works
 
@@ -53,9 +65,37 @@ editor.
 - **Bounded ticks.** Work per tick is capped (`limits` in config); a large
   backlog drains over days instead of producing one enormous, unreviewable burst.
 
+## AI backends
+
+The tick is an *agentic session* — it runs `gh`, edits ledgers, writes files —
+so backends are headless coding-agent CLIs, selected at install time:
+
+```bash
+./install.sh                                            # Claude Code (default)
+STEWARD_ENGINE=codex ./install.sh                       # OpenAI Codex CLI
+STEWARD_ENGINE=gemini ./install.sh                      # Gemini CLI
+STEWARD_ENGINE=opencode STEWARD_MODEL=ollama/qwen3 ./install.sh   # local models
+STEWARD_ENGINE=custom STEWARD_ENGINE_CMD='my-agent --prompt "$PROMPT"' ./install.sh
+```
+
+- **Local / OpenAI-compatible providers** come in two flavors: run
+  [opencode](https://opencode.ai) against Ollama/LM Studio/any provider it
+  supports, or keep the Claude Code engine and point it at a proxy
+  (`ANTHROPIC_BASE_URL` + [LiteLLM](https://github.com/BerriAI/litellm) routes
+  to OpenAI, Bedrock, Vertex, or local models without any steward changes).
+- **Caveats for non-Claude engines**: the merge/close/force-push *permission
+  deny layer* ships as `.claude/settings.json`, which only Claude Code
+  enforces — on other engines the playbook's guardrails still instruct, but
+  nothing mechanically blocks; configure your engine's own sandbox/approval
+  settings accordingly. Token/cost capture in `usage.jsonl` is currently
+  Claude-only (other engines don't emit a usage envelope headlessly); the
+  metrics page degrades gracefully. Engines other than Claude Code are
+  lightly tested — reports and PRs welcome.
+
 ## Requirements
 
-- [Claude Code](https://claude.com/claude-code) CLI, authenticated
+- A headless agent CLI (see backends above; default
+  [Claude Code](https://claude.com/claude-code)), authenticated
 - [gh](https://cli.github.com/) CLI, authenticated with push access to your repos
 - Linux with a systemd user session, `python3`, `jq`
 
@@ -146,8 +186,8 @@ systemctl --user start repo-steward.service   # one tick, now
 journalctl --user -u repo-steward.service     # tick history
 ```
 
-Uninstall: `systemctl --user disable --now repo-steward.timer repo-steward-dash.service`
-and delete the three unit files from `~/.config/systemd/user/`.
+Uninstall: `systemctl --user disable --now repo-steward.timer repo-steward-dash.service repo-steward-uptime.timer`
+and delete the `repo-steward*` unit files from `~/.config/systemd/user/`.
 
 ## Costs & cadence
 

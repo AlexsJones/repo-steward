@@ -5,10 +5,13 @@
 #   ./install.sh --no-timer      install everything but leave the timer off
 #
 # Env overrides:
-#   STEWARD_MODEL   pin a model for ticks (e.g. claude-opus-4-8); default: your
-#                   Claude Code default model
-#   STEWARD_PORT    dashboard port (default 8377)
-#   STEWARD_CADENCE systemd OnCalendar for ticks (default "*-*-* *:17:00" = hourly at :17)
+#   STEWARD_ENGINE     agent CLI running the tick: claude (default) | codex |
+#                      gemini | opencode | custom
+#   STEWARD_ENGINE_CMD full command for engine=custom ($PROMPT is exported)
+#   STEWARD_MODEL      pin a model for ticks (e.g. claude-opus-4-8); default:
+#                      the engine's own default
+#   STEWARD_PORT       dashboard port (default 8377)
+#   STEWARD_CADENCE    systemd OnCalendar for ticks (default "*-*-* *:17:00" = hourly at :17)
 set -euo pipefail
 
 STEWARD_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,14 +21,18 @@ CADENCE="${STEWARD_CADENCE:-*-*-* *:17:00}"
 ENABLE_TIMER=true
 [[ "${1:-}" == "--no-timer" ]] && ENABLE_TIMER=false
 
-CLAUDE_BIN="$(command -v claude || true)"
-[[ -n "$CLAUDE_BIN" ]] || { echo "error: claude CLI not found in PATH (https://claude.com/claude-code)"; exit 1; }
+ENGINE="${STEWARD_ENGINE:-claude}"
+if [[ "$ENGINE" == "custom" ]]; then
+  [[ -n "${STEWARD_ENGINE_CMD:-}" ]] || { echo "error: engine=custom requires STEWARD_ENGINE_CMD"; exit 1; }
+  ENGINE_BIN=""
+else
+  ENGINE_BIN="$(command -v "$ENGINE" || true)"
+  [[ -n "$ENGINE_BIN" ]] || { echo "error: '$ENGINE' CLI not found in PATH"; exit 1; }
+fi
 command -v gh >/dev/null || { echo "error: gh CLI not found"; exit 1; }
 gh auth status >/dev/null 2>&1 || { echo "error: gh is not authenticated (run: gh auth login)"; exit 1; }
 command -v python3 >/dev/null || { echo "error: python3 not found"; exit 1; }
-
-MODEL_FLAG=""
-[[ -n "${STEWARD_MODEL:-}" ]] && MODEL_FLAG=" --model ${STEWARD_MODEL}"
+command -v jq >/dev/null || { echo "error: jq not found"; exit 1; }
 
 mkdir -p "$STEWARD_HOME"/{state,logs} "$UNIT_DIR"
 [[ -f "$STEWARD_HOME/config.yaml" ]] || {
@@ -41,7 +48,9 @@ After=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=$STEWARD_HOME
-Environment=CLAUDE_BIN=$CLAUDE_BIN
+Environment=STEWARD_ENGINE=$ENGINE
+${ENGINE_BIN:+Environment=STEWARD_ENGINE_BIN=$ENGINE_BIN}
+${STEWARD_ENGINE_CMD:+Environment=STEWARD_ENGINE_CMD=$STEWARD_ENGINE_CMD}
 ${STEWARD_MODEL:+Environment=STEWARD_MODEL=$STEWARD_MODEL}
 ExecStart=$STEWARD_HOME/tick.sh
 TimeoutStartSec=5400
@@ -76,12 +85,18 @@ WantedBy=default.target
 EOF
 
 # Headless claude needs the steward home pre-trusted or it ignores
-# .claude/settings.json permissions.
-if command -v jq >/dev/null && [[ -f "$HOME/.claude.json" ]]; then
-  jq --arg d "$STEWARD_HOME" '.projects[$d].hasTrustDialogAccepted = true' \
-    "$HOME/.claude.json" > "$HOME/.claude.json.tmp" && mv "$HOME/.claude.json.tmp" "$HOME/.claude.json"
+# .claude/settings.json permissions (the merge/close/force-push deny layer).
+if [[ "$ENGINE" == "claude" ]]; then
+  if [[ -f "$HOME/.claude.json" ]]; then
+    jq --arg d "$STEWARD_HOME" '.projects[$d].hasTrustDialogAccepted = true' \
+      "$HOME/.claude.json" > "$HOME/.claude.json.tmp" && mv "$HOME/.claude.json.tmp" "$HOME/.claude.json"
+  else
+    echo ">> NOTE: run claude interactively in $STEWARD_HOME once and accept the trust dialog"
+  fi
 else
-  echo ">> NOTE: run claude interactively in $STEWARD_HOME once and accept the trust dialog"
+  echo ">> NOTE: engine '$ENGINE' does not enforce the merge/close/force-push deny layer"
+  echo "   (.claude/settings.json is Claude Code-specific) — the playbook guardrails still"
+  echo "   apply, but review your engine's own sandbox/approval settings."
 fi
 
 cat > "$UNIT_DIR/repo-steward-uptime.service" <<EOF
