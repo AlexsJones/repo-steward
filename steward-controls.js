@@ -41,6 +41,37 @@
   statusline.style.flexBasis = '100%';
   statusline.style.marginLeft = '0';
 
+  // Themed confirm modal (replaces window.confirm). Returns a Promise<bool>.
+  function modal(opts) {
+    return new Promise(function (resolve) {
+      var overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;' +
+        'align-items:center;justify-content:center;z-index:100;padding:20px;';
+      var dlg = document.createElement('div');
+      dlg.style.cssText = 'background:var(--panel);color:var(--ink);border:1px solid var(--line);' +
+        'border-radius:12px;box-shadow:0 14px 44px rgba(0,0,0,.42);max-width:470px;width:100%;padding:22px 24px;';
+      var tone = opts.tone || 'accent';
+      dlg.innerHTML =
+        '<h3 style="margin:0 0 12px;font:600 18px system-ui,-apple-system,sans-serif">' + opts.title + '</h3>' +
+        '<div style="font-size:14px;line-height:1.6;color:var(--muted)">' + opts.body + '</div>' +
+        '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:22px">' +
+        '<button data-act="cancel" style="font:600 13px system-ui,sans-serif;padding:9px 16px;border-radius:8px;' +
+        'border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer">' + (opts.cancel || 'Cancel') + '</button>' +
+        '<button data-act="ok" style="font:600 13px system-ui,sans-serif;padding:9px 18px;border-radius:8px;' +
+        'border:none;background:var(--' + tone + ');color:var(--panel);cursor:pointer">' + (opts.confirm || 'Confirm') + '</button>' +
+        '</div>';
+      overlay.appendChild(dlg);
+      document.body.appendChild(overlay);
+      function close(v) { overlay.remove(); document.removeEventListener('keydown', onKey); resolve(v); }
+      function onKey(e) { if (e.key === 'Escape') close(false); else if (e.key === 'Enter') close(true); }
+      document.addEventListener('keydown', onKey);
+      overlay.addEventListener('click', function (e) { if (e.target === overlay) close(false); });
+      dlg.querySelector('[data-act=cancel]').addEventListener('click', function () { close(false); });
+      dlg.querySelector('[data-act=ok]').addEventListener('click', function () { close(true); });
+      dlg.querySelector('[data-act=ok]').focus();
+    });
+  }
+
   // Mode toggle: replaces any statically-rendered draft chip. Clicking flips
   // draft <-> live via /api/mode (config.yaml is the source of truth).
   var stale = document.querySelector('.chip.draft');
@@ -59,17 +90,32 @@
   paintMode(initial.mode);
   modeChip.addEventListener('click', function () {
     var to = modeChip.dataset.mode === 'draft' ? 'live' : 'draft';
-    var msg = to === 'live'
-      ? 'Go LIVE? From the next tick the steward posts reviews, replies, and labels to GitHub autonomously (signed, never merging/closing).'
-      : 'Back to DRAFT? The steward will stage everything here instead of posting.';
-    if (!confirm(msg)) return;
-    fetch('/api/mode', { method: 'POST', body: JSON.stringify({ mode: to }) })
-      .then(function (r) { return r.json(); })
-      .then(function (res) {
-        if (res.error) { alert(res.error); return; }
-        paintMode(res.mode);
-      })
-      .catch(function () { alert('mode change failed — is the API up?'); });
+    var opts = to === 'live' ? {
+      title: 'Go live?',
+      body: '<p style="margin:0 0 12px">Right now the steward <strong>stages</strong> everything for your approval and posts nothing. Going live changes that:</p>' +
+        '<ul style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:7px">' +
+        '<li>From the next tick, it <strong>posts its reviews, replies, and labels straight to GitHub</strong> — each signed so contributors know it\'s your steward.</li>' +
+        '<li>It still <strong>never merges, closes, or force-pushes</strong> — those stay entirely yours.</li>' +
+        '<li>Tie-breaks and design calls still wait for you under <em>Decisions needed</em>.</li>' +
+        '</ul>' +
+        '<p style="margin:12px 0 0">You can switch back to draft anytime.</p>',
+      confirm: 'Go live', tone: 'accent'
+    } : {
+      title: 'Switch back to draft?',
+      body: 'The steward will <strong>stop posting to GitHub</strong> and stage everything on the dashboard for your approval instead. Anything already posted stays as it is.',
+      confirm: 'Switch to draft', tone: 'warn'
+    };
+    modal(opts).then(function (ok) {
+      if (!ok) return;
+      fetch('/api/mode', { method: 'POST', body: JSON.stringify({ mode: to }) })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (res.error) { alert(res.error); return; }
+          paintMode(res.mode);
+          toast(res.mode === 'live' ? 'Live — the steward will post from the next tick.' : 'Back to draft — nothing will be posted.', res.mode === 'live' ? 'ok' : 'warn');
+        })
+        .catch(function () { alert('mode change failed — is the API up?'); });
+    });
   });
 
   // Live site-uptime chips (fed by uptime_check.py via /api/uptime).
