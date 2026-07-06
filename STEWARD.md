@@ -109,9 +109,11 @@ running `server.py`, default http://localhost:8377/dashboard.html).
 Non-negotiable template invariants when regenerating:
 - Keep `<meta charset="utf-8">` and `<meta http-equiv="refresh" content="300">`
   (server sends no charset header; without the meta tag text renders as mojibake).
-- Keep the `<script id="steward-controls">` block verbatim at the end of the
-  file — it renders the "Run tick now" button and per-item "Approve & post"
-  buttons against server.py's /api endpoints.
+- Keep `<script id="steward-controls" src="/steward-controls.js"></script>` at
+  the end of the file — it renders the "Run tick now" button, live site-status
+  chips, and per-item "Approve & post" buttons against server.py's /api
+  endpoints. The script is a tracked repo file; never inline or modify it
+  during a tick.
 - Every staged `<details class="staged">` block MUST carry
   `data-repo="<short-repo>" data-items="<comma-separated ledger keys>"`
   (e.g. `data-repo="myrepo" data-items="pr-579,pr-594"`); the controls script
