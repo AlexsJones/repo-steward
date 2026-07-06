@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-label="Repo Steward — an autonomous maintainer's assistant">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#123F37"/>
+      <stop offset="1" stop-color="#0B2B26"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="640" fill="url(#bg)"/>
+
+  <!-- interlinked commit-rings mark -->
+  <g transform="translate(96,192) scale(1.6)">
+    <circle cx="104" cy="128" r="46" fill="none" stroke="#ECF5F1" stroke-width="17"/>
+    <circle cx="152" cy="128" r="46" fill="none" stroke="#8FD8C4" stroke-width="17"/>
+    <path d="M141.5 156.4 A46 46 0 0 1 113.5 172.7" fill="none" stroke="#ECF5F1" stroke-width="17" stroke-linecap="butt"/>
+    <circle cx="58" cy="128" r="14" fill="#ECF5F1"/>
+    <circle cx="58" cy="128" r="6" fill="#0F4E42"/>
+    <circle cx="198" cy="128" r="14" fill="#8FD8C4"/>
+    <circle cx="198" cy="128" r="6" fill="#0F4E42"/>
+  </g>
+
+  <g font-family="Iowan Old Style, Palatino, Georgia, serif">
+    <text x="560" y="310" font-size="88" font-weight="600" fill="#ECF5F1">Repo Steward</text>
+  </g>
+  <text x="562" y="370" font-size="28" fill="#A9CFC2" font-family="system-ui, -apple-system, sans-serif">An autonomous maintainer's assistant for your</text>
+  <text x="562" y="412" font-size="28" fill="#A9CFC2" font-family="system-ui, -apple-system, sans-serif">open-source repos — triage, PR review, uptime.</text>
+  <text x="562" y="500" font-size="26" fill="#8FD8C4" font-family="ui-monospace, Menlo, monospace">github.com/AlexsJones/repo-steward</text>
+</svg>

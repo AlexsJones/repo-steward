@@ -107,7 +107,8 @@ Regenerate `dashboard.html` (same visual structure — edit data, keep design):
 The dashboard is served locally (systemd unit `repo-steward-dash.service`
 running `server.py`, default http://localhost:8377/dashboard.html).
 Non-negotiable template invariants when regenerating:
-- Keep `<meta charset="utf-8">` and `<meta http-equiv="refresh" content="300">`
+- Keep `<meta charset="utf-8">`, `<meta http-equiv="refresh" content="300">`,
+  and `<link rel="icon" href="/assets/logo.svg" type="image/svg+xml">`
   (server sends no charset header; without the meta tag text renders as mojibake).
 - Keep `<script id="steward-controls" src="/steward-controls.js"></script>` at
   the end of the file — it renders the "Run tick now" button, live site-status

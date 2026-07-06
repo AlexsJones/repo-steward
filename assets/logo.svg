@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Repo Steward logo">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1D7A66"/>
+      <stop offset="1" stop-color="#0F4E42"/>
+    </linearGradient>
+  </defs>
+
+  <!-- tile -->
+  <rect width="256" height="256" rx="56" fill="url(#tile)"/>
+
+  <!-- two interlinked commit-rings: repos held together by the steward -->
+  <!-- ring A (cream) -->
+  <circle cx="104" cy="128" r="46" fill="none" stroke="#ECF5F1" stroke-width="17"/>
+  <!-- ring B (teal) drawn over A -->
+  <circle cx="152" cy="128" r="46" fill="none" stroke="#8FD8C4" stroke-width="17"/>
+  <!-- weave: bring ring A back on top at the lower crossing -->
+  <path d="M141.5 156.4 A46 46 0 0 1 113.5 172.7" fill="none" stroke="#ECF5F1" stroke-width="17" stroke-linecap="butt"/>
+
+  <!-- commit nodes on each ring -->
+  <circle cx="58" cy="128" r="14" fill="#ECF5F1"/>
+  <circle cx="58" cy="128" r="6" fill="#0F4E42"/>
+  <circle cx="198" cy="128" r="14" fill="#8FD8C4"/>
+  <circle cx="198" cy="128" r="6" fill="#0F4E42"/>
+</svg>

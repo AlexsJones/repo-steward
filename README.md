@@ -1,4 +1,8 @@
-# 🤝 Repo Steward
+<p align="center">
+  <img src="assets/logo.svg" width="128" alt="Repo Steward — two interlinked commit rings">
+</p>
+
+# Repo Steward
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f.svg)](LICENSE)
 [![Engine: Claude Code](https://img.shields.io/badge/engine-Claude%20Code%20%7C%20Codex%20%7C%20Gemini%20%7C%20opencode-1d6e62.svg)](#ai-backends)
