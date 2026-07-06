@@ -135,7 +135,8 @@ def tick_elapsed_sec():
 
 
 def eta_sec():
-    """Median duration of recent measured ticks, as a rough ETA."""
+    """Median duration of recent measured ticks. Returns None until there are
+    at least 3 samples — below that a single number is noise, not an estimate."""
     p = ROOT / "usage.jsonl"
     if not p.exists():
         return None
@@ -147,10 +148,43 @@ def eta_sec():
                 durs.append(d / 1000)
         except json.JSONDecodeError:
             pass
-    if not durs:
+    if len(durs) < 3:
         return None
     durs.sort()
     return int(durs[len(durs) // 2])
+
+
+def tick_progress():
+    """Deterministic tick position: how many of the configured repos have
+    actually been touched (ledger rewritten this tick, or seen in the progress
+    feed), plus the latest free-text activity note. Does not trust the LLM's
+    self-assigned repo indices."""
+    el = tick_elapsed_sec()
+    if el is None:
+        return None
+    start = time.time() - el - 5
+    seen = set()
+    for p in (ROOT / "state").glob("*.json"):
+        try:
+            if p.stat().st_mtime >= start:
+                seen.add(p.stem)
+        except OSError:
+            pass
+    note = None
+    prog = ROOT / "progress.jsonl"
+    if prog.exists():
+        for line in prog.read_text().splitlines():
+            try:
+                o = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            r = o.get("repo")
+            if r and r != "fleet":
+                seen.add(r)
+            if o.get("phase") in ("repo", "item") and o.get("msg"):
+                note = (r + ": " if r else "") + o["msg"]
+    total = len(repo_map()) or 1
+    return {"repos_done": min(len(seen), total), "repos_total": total, "note": note}
 
 
 def current_schedule():
@@ -246,6 +280,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "mode": steward_mode(),
                 "elapsed_sec": tick_elapsed_sec() if active else None,
                 "eta_sec": eta_sec(),
+                "progress": tick_progress() if active else None,
                 "schedule": current_schedule(),
                 "limits": read_limits(),
             })

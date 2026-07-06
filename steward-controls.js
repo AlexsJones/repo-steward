@@ -411,17 +411,21 @@
     });
   }
 
-  function renderProgress(status, steps) {
-    var repoSteps = steps.filter(function (s) { return s.phase === 'repo'; });
-    var last = steps[steps.length - 1] || {};
-    var lastRepo = repoSteps[repoSteps.length - 1];
-    var pct = lastRepo && lastRepo.total ? Math.round(lastRepo.idx / lastRepo.total * 100) : 8;
-    progBar.style.width = pct + '%';
-    var elapsed = 'elapsed ' + fmtDur(status.elapsed_sec);
-    var eta = status.eta_sec ? ' · ~' + fmtDur(Math.max(0, status.eta_sec - (status.elapsed_sec || 0))) + ' left (est)' : '';
-    var where = lastRepo ? ' · ' + lastRepo.repo + ' (repo ' + lastRepo.idx + '/' + lastRepo.total + ')'
-      : (last.msg ? ' · ' + last.msg : '');
-    progLabel.textContent = 'Tick running · ' + elapsed + eta + where;
+  function renderProgress(status) {
+    var p = status.progress || {};
+    // Deterministic position: repos actually touched this tick / total.
+    var done = p.repos_done || 0, total = p.repos_total || 0;
+    var pct = total ? Math.round(done / total * 100) : 6;
+    progBar.style.width = Math.max(4, pct) + '%';
+    var parts = ['elapsed ' + fmtDur(status.elapsed_sec)];
+    // Only show an ETA once it's built from enough history (server gates this).
+    if (status.eta_sec && status.eta_sec > (status.elapsed_sec || 0)) {
+      parts.push('~' + fmtDur(status.eta_sec - status.elapsed_sec) + ' left (est)');
+    }
+    if (total) parts.push(done + '/' + total + ' repositories');
+    var label = 'Tick running · ' + parts.join(' · ');
+    if (p.note) label += ' · ' + p.note;
+    progLabel.textContent = label;
   }
 
   var seenItemKeys = {};
@@ -432,7 +436,7 @@
       if (s.tick_active) {
         fetch('/api/progress').then(function (r) { return r.json(); }).then(function (p) {
           var steps = p.steps || [];
-          renderProgress(s, steps);
+          renderProgress(s);
           // Toast the most recent per-repo transition (once each).
           steps.filter(function (x) { return x.phase === 'repo'; }).forEach(function (x) {
             var k = x.repo + ':' + x.idx;
