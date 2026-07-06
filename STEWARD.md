@@ -128,9 +128,9 @@ tool is unavailable — normal in headless runs — skip; the local file is the
 source of truth.
 
 ### 7. Housekeeping
-- On/after `draft_until` while mode is still `draft`: add an escalation asking
-  the maintainer to flip to `live` (include stats on staged actions so they
-  can judge).
+- Mode (draft/live) is toggled by the maintainer from the dashboard mode chip;
+  never change it yourself, and don't render a mode chip in the statusline —
+  the controls script owns it.
 - If a tick finds zero changes and zero backlog, just update metrics + cursor
   and touch nothing else.
 - If `gh` auth fails or rate-limits, record it in escalations.md and exit

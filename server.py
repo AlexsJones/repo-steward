@@ -155,6 +155,18 @@ class Handler(SimpleHTTPRequestHandler):
                             "repo-steward.service"], check=False)
             return self._json(200, {"started": True})
 
+        if self.path == "/api/mode":
+            new_mode = req.get("mode")
+            if new_mode not in ("draft", "live"):
+                return self._json(400, {"error": "mode must be 'draft' or 'live'"})
+            cfg_path = ROOT / "config.yaml"
+            cfg = cfg_path.read_text()
+            cfg, n = re.subn(r"^mode:\s*\w+", f"mode: {new_mode}", cfg, count=1, flags=re.M)
+            if not n:
+                return self._json(500, {"error": "no 'mode:' line found in config.yaml"})
+            cfg_path.write_text(cfg)
+            return self._json(200, {"mode": new_mode})
+
         if self.path == "/api/approve":
             if tick_active():
                 return self._json(409, {"error": "tick running — try again when it finishes"})

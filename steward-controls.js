@@ -7,6 +7,37 @@
   function init(initial) {
   var statusline = document.querySelector('.statusline');
 
+  // Mode toggle: replaces any statically-rendered draft chip. Clicking flips
+  // draft <-> live via /api/mode (config.yaml is the source of truth).
+  var stale = document.querySelector('.chip.draft');
+  if (stale) stale.remove();
+  var modeChip = document.createElement('button');
+  modeChip.className = 'chip';
+  statusline.insertBefore(modeChip, statusline.firstChild);
+  function paintMode(mode) {
+    var draft = mode !== 'live';
+    modeChip.textContent = draft ? 'DRAFT — click to go live' : 'LIVE — click for draft';
+    modeChip.style.cssText = 'cursor:pointer;border-color:transparent;' + (draft
+      ? 'background:var(--warn-soft);color:var(--warn);'
+      : 'background:var(--ok-soft);color:var(--ok);');
+    modeChip.dataset.mode = draft ? 'draft' : 'live';
+  }
+  paintMode(initial.mode);
+  modeChip.addEventListener('click', function () {
+    var to = modeChip.dataset.mode === 'draft' ? 'live' : 'draft';
+    var msg = to === 'live'
+      ? 'Go LIVE? From the next tick the steward posts reviews, replies, and labels to GitHub autonomously (signed, never merging/closing).'
+      : 'Back to DRAFT? The steward will stage everything here instead of posting.';
+    if (!confirm(msg)) return;
+    fetch('/api/mode', { method: 'POST', body: JSON.stringify({ mode: to }) })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res.error) { alert(res.error); return; }
+        paintMode(res.mode);
+      })
+      .catch(function () { alert('mode change failed — is the API up?'); });
+  });
+
   // Live site-uptime chips (fed by uptime_check.py via /api/uptime).
   function sitesPoll() {
     fetch('/api/uptime').then(function (r) { return r.json(); }).then(function (u) {

@@ -3,7 +3,7 @@
 
 mode: draft            # draft = stage all outbound GitHub actions, post nothing.
                        # live  = post reviews/replies/labels autonomously.
-draft_until: 2099-01-01  # while mode=draft, the steward escalates a go/no-go on this date
+                       # Toggled from the dashboard mode chip (/api/mode).
 
 autonomy: full         # full = reviews, triage replies, labels, and bug-fix PRs
                        # (fix PRs pushed as steward branches, never merged)

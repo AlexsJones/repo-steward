@@ -43,8 +43,8 @@ editor.
   (`.claude/settings.json`), not just in the prompt.
 - **Draft mode first.** Out of the box, nothing is posted to GitHub — every
   would-be review/reply is staged on the dashboard so you can calibrate the
-  steward's judgment before it speaks on your repos. Flip `mode: live` in
-  `config.yaml` when ready.
+  steward's judgment before it speaks on your repos. Go live with the mode
+  toggle on the dashboard (or edit `mode:` in `config.yaml` — same thing).
 - **Untrusted-content aware.** Issue/PR bodies are treated as data; the
   playbook instructs the steward to ignore embedded instructions and flag
   manipulation attempts. Contributor code is never executed on your shell.
