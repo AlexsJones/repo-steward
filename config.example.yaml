@@ -34,4 +34,4 @@ dashboard:
 
 # Appended to every comment/review the steward posts in live mode, so
 # contributors know it's a bot and maintainers can audit its output.
-signature: "🤝 _Handled by the maintainer's repo steward — replies reviewed by [@your-github-user](https://github.com/your-github-user)_"
+signature: "🤝 _Handled by the maintainer's [repo steward](https://github.com/AlexsJones/repo-steward) — replies reviewed by [@your-github-user](https://github.com/your-github-user)_"
