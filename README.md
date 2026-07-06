@@ -100,6 +100,55 @@ STEWARD_ENGINE=custom STEWARD_ENGINE_CMD='my-agent --prompt "$PROMPT"' ./install
   metrics page degrades gracefully. Engines other than Claude Code are
   lightly tested — reports and PRs welcome.
 
+## Why not a general-purpose agent harness?
+
+A reasonable question: agent harnesses and orchestration frameworks (Hermes,
+OpenClaw, Pi, and the growing rest) already give you scheduling, tool use,
+memory, and multi-agent coordination. Why hand-roll systemd + `gh` + JSON
+files instead of building on one?
+
+Because for *this* job the harness is the part you'd spend your time fighting,
+and the properties that matter here come from deliberately **not** having one:
+
+- **The state is plain files, not a runtime.** Every tick is a stateless,
+  resumable `claude -p` invocation; continuity lives entirely in
+  `state/<repo>.json`, `metrics.jsonl`, and `escalations.md` — versioned,
+  greppable, and editable with a text editor. There's no daemon holding
+  in-memory state, no database to migrate, no orchestration server to keep
+  alive. A harness adds a stateful layer you now have to run, observe, and
+  trust; here, if the machine reboots mid-tick, the next tick just re-reads the
+  cursor and continues.
+
+- **The trust surface is small enough to read in an afternoon.** The whole
+  system is a handful of readable files: one playbook, one ~250-line stdlib
+  Python server, one bash wrapper, one uptime probe. For software that acts on
+  your repos under your GitHub identity, "you can audit all of it" is a
+  feature, not a limitation.
+
+- **Guardrails sit at the OS boundary, not inside a framework's config.**
+  "Never merge, close, or force-push" is a `gh` permission deny-list enforced
+  by Claude Code's sandbox — not a prompt instruction or a policy plugin a
+  harness update could quietly change. Fewer moving parts between the intent
+  and the enforcement.
+
+- **The product is the human in the loop, not autonomy.** Draft mode,
+  approve-to-post, escalate-don't-decide — the design optimizes for doing
+  *less* on its own until you say otherwise. Most harnesses optimize the
+  opposite direction; you'd be turning features off.
+
+- **No lock-in to one harness's abstractions.** The tick engine is already
+  swappable (`claude` / `codex` / `gemini` / `opencode` / `custom`). If you
+  *want* a harness, point `STEWARD_ENGINE=custom` at it and the steward's
+  file-based contract still holds. This isn't anti-harness — it's
+  harness-agnostic, with the orchestration kept boring on purpose.
+
+The honest tradeoff: a real harness gives you sophisticated multi-agent
+planning, shared memory, and a tool ecosystem this doesn't have. Repo Steward
+is a *steward*, not a general agent — a narrow job with strong guarantees. When
+the job needs a fleet of coordinating agents, reach for the harness. When it
+needs to reliably keep your PRs moving without becoming another system to
+operate, reach for this.
+
 ## Requirements
 
 - A headless agent CLI (see backends above; default
