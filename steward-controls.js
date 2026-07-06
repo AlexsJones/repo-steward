@@ -82,7 +82,7 @@
     var draft = mode !== 'live';
     modeChip.textContent = draft ? 'DRAFT — click to go live' : 'LIVE — click for draft';
     modeChip.style.cssText = 'font:600 12px ui-monospace,Menlo,monospace;padding:9px 14px;' +
-      'border-radius:8px;border:none;cursor:pointer;margin-left:auto;align-self:center;flex-shrink:0;' + (draft
+      'border-radius:8px;border:none;cursor:pointer;margin-left:10px;align-self:center;flex-shrink:0;' + (draft
       ? 'background:var(--warn-soft);color:var(--warn);'
       : 'background:var(--ok-soft);color:var(--ok);');
     modeChip.dataset.mode = draft ? 'draft' : 'live';
@@ -226,6 +226,17 @@
       : 'background:var(--accent);color:var(--panel);cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.25);');
   }
   header.insertBefore(btn, statusline);
+
+  // Relocate the "metrics →" link from the chip row up into the control
+  // cluster, styled as a distinct outlined nav item (not another action).
+  var metricsLink = document.querySelector('.statusline a[href$="metrics.html"]');
+  if (metricsLink) {
+    metricsLink.textContent = '📊 Metrics';
+    metricsLink.style.cssText = 'font:600 12px ui-monospace,Menlo,monospace;padding:8px 13px;border-radius:8px;' +
+      'border:1px solid var(--accent);background:transparent;color:var(--accent);text-decoration:none;' +
+      'margin-left:auto;align-self:center;flex-shrink:0;';
+    header.insertBefore(metricsLink, modeChip);
+  }
 
   // Progress strip below the header: appears only while a tick runs.
   var strip = document.createElement('div');
