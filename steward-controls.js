@@ -95,8 +95,47 @@
   }
   sitesPoll(); setInterval(sitesPoll, 60000);
 
-  // The primary action on the page: a solid button in the header, doubling
-  // as the tick status indicator (no separate "idle" chip).
+  // Toasts: bottom-right stack, auto-dismiss. Used for tick lifecycle events.
+  var toastWrap = document.createElement('div');
+  toastWrap.style.cssText = 'position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:8px;z-index:50;';
+  document.body.appendChild(toastWrap);
+  function toast(msg, kind) {
+    var t = document.createElement('div');
+    var tone = kind === 'ok' ? 'var(--ok)' : kind === 'warn' ? 'var(--warn)' : 'var(--accent)';
+    t.style.cssText = 'background:var(--panel);color:var(--ink);border-left:3px solid ' + tone +
+      ';box-shadow:0 2px 10px rgba(0,0,0,.28);border-radius:6px;padding:10px 14px;font-size:13px;max-width:340px;opacity:0;transition:opacity .2s;';
+    t.textContent = msg;
+    toastWrap.appendChild(t);
+    requestAnimationFrame(function () { t.style.opacity = 1; });
+    setTimeout(function () { t.style.opacity = 0; setTimeout(function () { t.remove(); }, 250); }, kind === 'ok' ? 8000 : 5000);
+  }
+
+  // Schedule dropdown: live-configures the systemd timer via /api/schedule.
+  var sched = document.createElement('select');
+  sched.title = 'Tick schedule';
+  sched.style.cssText = 'font:600 12px ui-monospace,Menlo,monospace;padding:9px 10px;border-radius:8px;' +
+    'border:1px solid var(--line);background:var(--panel);color:var(--muted);cursor:pointer;margin-left:10px;align-self:center;flex-shrink:0;';
+  [['manual', 'Manual only'], ['hourly', 'Hourly'], ['6h', 'Every 6h'],
+   ['daily', 'Daily 07:00'], ['weekly', 'Weekly Mon']].forEach(function (o) {
+    var opt = document.createElement('option');
+    opt.value = o[0]; opt.textContent = '⏱ ' + o[1]; sched.appendChild(opt);
+  });
+  function paintSched(s) { sched.value = (s && s.preset) || 'manual'; }
+  paintSched(initial.schedule);
+  sched.addEventListener('change', function () {
+    fetch('/api/schedule', { method: 'POST', body: JSON.stringify({ preset: sched.value }) })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res.error) { alert(res.error); return; }
+        toast(res.schedule.preset === 'manual'
+          ? 'Schedule off — ticks are manual now.'
+          : 'Scheduled: ' + res.schedule.label + '.', 'ok');
+      })
+      .catch(function () { alert('schedule change failed — is the API up?'); });
+  });
+  header.insertBefore(sched, statusline);
+
+  // The primary action: solid button, doubling as tick status indicator.
   var btn = document.createElement('button');
   var btnBase = 'font:600 14px system-ui,-apple-system,sans-serif;padding:10px 20px;' +
     'border-radius:8px;border:none;letter-spacing:.01em;margin-left:10px;align-self:center;flex-shrink:0;';
@@ -107,25 +146,81 @@
   }
   header.insertBefore(btn, statusline);
 
+  // Progress strip below the header: appears only while a tick runs.
+  var strip = document.createElement('div');
+  strip.style.cssText = 'display:none;margin:-16px 0 24px;';
+  strip.innerHTML = '<div style="font:12px ui-monospace,Menlo,monospace;color:var(--muted);margin-bottom:5px" id="prog-label"></div>' +
+    '<div style="height:6px;background:var(--panel-2);border-radius:999px;overflow:hidden">' +
+    '<div id="prog-bar" style="height:100%;width:0;background:var(--accent);transition:width .4s"></div></div>';
+  var main = document.querySelector('main');
+  main.insertBefore(strip, main.querySelector('section'));
+  var progLabel = strip.querySelector('#prog-label');
+  var progBar = strip.querySelector('#prog-bar');
+
+  function fmtDur(s) {
+    if (s == null) return '?';
+    var m = Math.floor(s / 60), r = s % 60;
+    return m ? m + 'm ' + r + 's' : r + 's';
+  }
+
+  var wasBusy = initial.tick_active;
   function setBusy(busy) {
     btn.disabled = busy;
     btn.textContent = busy ? '⟳ Tick running…' : '▶ Run tick now';
     styleBtn(busy);
+    strip.style.display = busy ? 'block' : 'none';
+    sched.disabled = busy;
     document.querySelectorAll('.approve-btn').forEach(function (b) {
       if (!b.dataset.done) { b.disabled = busy; b.style.opacity = busy ? 0.5 : 1; }
     });
   }
-  function poll() {
-    fetch('/api/status').then(function (r) { return r.json(); })
-      .then(function (s) { setBusy(s.tick_active); })
-      .catch(function () { btn.textContent = 'api unreachable'; });
+
+  function renderProgress(status, steps) {
+    var repoSteps = steps.filter(function (s) { return s.phase === 'repo'; });
+    var last = steps[steps.length - 1] || {};
+    var lastRepo = repoSteps[repoSteps.length - 1];
+    var pct = lastRepo && lastRepo.total ? Math.round(lastRepo.idx / lastRepo.total * 100) : 8;
+    progBar.style.width = pct + '%';
+    var elapsed = 'elapsed ' + fmtDur(status.elapsed_sec);
+    var eta = status.eta_sec ? ' · ~' + fmtDur(Math.max(0, status.eta_sec - (status.elapsed_sec || 0))) + ' left (est)' : '';
+    var where = lastRepo ? ' · ' + lastRepo.repo + ' (repo ' + lastRepo.idx + '/' + lastRepo.total + ')'
+      : (last.msg ? ' · ' + last.msg : '');
+    progLabel.textContent = 'Tick running · ' + elapsed + eta + where;
   }
-  setBusy(initial.tick_active); setInterval(poll, 15000);
+
+  var seenItemKeys = {};
+  function poll() {
+    fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
+      setBusy(s.tick_active);
+      paintSched(s.schedule);
+      if (s.tick_active) {
+        fetch('/api/progress').then(function (r) { return r.json(); }).then(function (p) {
+          var steps = p.steps || [];
+          renderProgress(s, steps);
+          // Toast the most recent per-repo transition (once each).
+          steps.filter(function (x) { return x.phase === 'repo'; }).forEach(function (x) {
+            var k = x.repo + ':' + x.idx;
+            if (!seenItemKeys[k]) { seenItemKeys[k] = 1; if (wasBusy) toast('Processing ' + x.repo + ' (' + x.idx + '/' + x.total + ')'); }
+          });
+        }).catch(function () {});
+      }
+      if (wasBusy && !s.tick_active) {
+        toast('Tick complete — refreshing the board…', 'ok');
+        seenItemKeys = {};
+        setTimeout(function () { location.reload(); }, 1500);
+      }
+      wasBusy = s.tick_active;
+    }).catch(function () { btn.textContent = 'api unreachable'; });
+  }
+  setBusy(initial.tick_active);
+  if (initial.tick_active) poll();
+  setInterval(poll, 5000);
 
   btn.addEventListener('click', function () {
     fetch('/api/tick', { method: 'POST', body: '{}' }).then(function (r) { return r.json(); })
       .then(function (res) {
-        if (res.error) alert(res.error); else setBusy(true);
+        if (res.error) { alert(res.error); return; }
+        wasBusy = true; setBusy(true); toast('Tick started.');
       });
   });
 

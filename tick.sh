@@ -16,6 +16,9 @@ BIN="${STEWARD_ENGINE_BIN:-${CLAUDE_BIN:-claude}}"
 MODEL="${STEWARD_MODEL:-}"
 export PROMPT="Read $STEWARD_HOME/STEWARD.md and execute one steward tick, following it exactly."
 
+# Fresh progress feed for this tick (the dashboard polls /api/progress).
+printf '{"ts":"%s","phase":"start","msg":"tick started"}\n' "$TS" > progress.jsonl
+
 case "$ENGINE" in
   claude)
     OUT="$("$BIN" -p ${MODEL:+--model "$MODEL"} --output-format json "$PROMPT")"
@@ -62,4 +65,6 @@ case "$ENGINE" in
     echo "unknown STEWARD_ENGINE '$ENGINE'" >> logs/tick.log; exit 1
     ;;
 esac
+printf '{"ts":"%s","phase":"done","rc":%s,"msg":"tick complete"}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RC" >> progress.jsonl
 exit $RC

@@ -27,6 +27,20 @@ dashboard.
 
 ## Tick sequence
 
+### Progress feed (do this throughout the tick)
+`tick.sh` resets `progress.jsonl` with a `start` line and appends a `done`
+line when the process exits. **You** append one JSON line to `progress.jsonl`
+as you move through the work, so the dashboard can show a live queue position
+and toast. Keep it cheap — one line per repo and per substantive item, not per
+API call. Schema (append only, never rewrite):
+```json
+{"ts":"<iso>","phase":"repo","repo":"llmfit","idx":3,"total":9,"msg":"reviewing PRs"}
+{"ts":"<iso>","phase":"item","repo":"llmfit","ref":"pr-583","msg":"delta re-review → iterate"}
+```
+`idx`/`total` on `phase":"repo"` drives the progress bar (repo N of the fleet).
+Emit a `repo` line when you start each repo, and an `item` line when you finish
+a substantive action on an issue/PR.
+
 ### 1. Sync
 For each repo in config (names are full `owner/repo`; state files are keyed by
 the short repo name, e.g. `state/myrepo.json`), fetch what changed since

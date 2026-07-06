@@ -2,8 +2,12 @@
 """Repo Steward dashboard server.
 
 Static file serving plus a minimal control API:
-  GET  /api/status            -> {"tick_active": bool, "mode": "draft"|"live"}
+  GET  /api/status            -> {tick_active, mode, elapsed_sec, eta_sec, schedule}
+  GET  /api/progress          -> {steps: [...]}  (per-item progress the tick emits)
+  GET  /api/metrics|uptime    -> chart data
   POST /api/tick              -> start one steward tick (refused while one runs)
+  POST /api/mode              -> {"mode": "draft"|"live"}  (rewrites config.yaml)
+  POST /api/schedule          -> {"preset": "manual"|"hourly"|"6h"|"daily"|"weekly"}
   POST /api/approve           -> execute a staged action set via gh
         body: {"repo": "llmfit", "items": ["pr-646", ...]}
 
@@ -21,6 +25,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 PORT = int(os.environ.get("STEWARD_PORT", "8377"))
 HOST = os.environ.get("STEWARD_HOST", "0.0.0.0")
+UNIT_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "systemd" / "user"
+
+# OnCalendar presets offered by the dashboard schedule control.
+SCHEDULES = {
+    "manual": (None, "Manual only"),
+    "hourly": ("*-*-* *:17:00", "Hourly"),
+    "6h": ("*-*-* 00,06,12,18:17:00", "Every 6 hours"),
+    "daily": ("*-*-* 07:00:00", "Daily at 07:00"),
+    "weekly": ("Mon *-*-* 07:00:00", "Weekly (Mon 07:00)"),
+}
 
 PLACEHOLDER = """<meta charset="utf-8"><title>Repo Steward</title>
 <body style="font-family:system-ui;max-width:600px;margin:80px auto;line-height:1.6">
@@ -52,6 +66,80 @@ def tick_active():
         capture_output=True, text=True,
     ).stdout.strip()
     return state in ("active", "activating")
+
+
+def tick_elapsed_sec():
+    """Seconds the running tick has been alive, or None if not running."""
+    pid = subprocess.run(
+        ["systemctl", "--user", "show", "repo-steward.service", "-p", "MainPID", "--value"],
+        capture_output=True, text=True).stdout.strip()
+    if not pid or pid == "0":
+        return None
+    et = subprocess.run(["ps", "-o", "etimes=", "-p", pid],
+                        capture_output=True, text=True).stdout.strip()
+    return int(et) if et.isdigit() else None
+
+
+def eta_sec():
+    """Median duration of recent measured ticks, as a rough ETA."""
+    p = ROOT / "usage.jsonl"
+    if not p.exists():
+        return None
+    durs = []
+    for line in p.read_text().splitlines():
+        try:
+            d = json.loads(line).get("duration_ms")
+            if d:
+                durs.append(d / 1000)
+        except json.JSONDecodeError:
+            pass
+    if not durs:
+        return None
+    durs.sort()
+    return int(durs[len(durs) // 2])
+
+
+def current_schedule():
+    active = subprocess.run(
+        ["systemctl", "--user", "is-active", "repo-steward.timer"],
+        capture_output=True, text=True).stdout.strip() == "active"
+    oncal, preset = None, "manual"
+    tf = UNIT_DIR / "repo-steward.timer"
+    if tf.exists():
+        m = re.search(r"^OnCalendar=(.+)$", tf.read_text(), re.M)
+        if m:
+            oncal = m.group(1).strip()
+    if active and oncal:
+        preset = next((k for k, (cal, _) in SCHEDULES.items() if cal == oncal), "custom")
+    label = SCHEDULES.get(preset, (None, oncal or "custom"))[1] if preset != "custom" else (oncal or "custom")
+    return {"enabled": active, "oncalendar": oncal, "preset": preset if active else "manual",
+            "label": label if active else "Manual only"}
+
+
+def set_schedule(preset):
+    if preset not in SCHEDULES:
+        return False, f"unknown preset {preset!r}"
+    tf = UNIT_DIR / "repo-steward.timer"
+    if preset == "manual":
+        subprocess.run(["systemctl", "--user", "disable", "--now", "repo-steward.timer"],
+                       capture_output=True, text=True)
+        return True, "manual"
+    if not tf.exists():
+        return False, "timer unit not found — run install.sh first"
+    oncal = SCHEDULES[preset][0]
+    text = tf.read_text()
+    # Replace all OnCalendar lines with a single one for the chosen preset.
+    lines = [ln for ln in text.splitlines() if not ln.startswith("OnCalendar=")]
+    out = []
+    for ln in lines:
+        out.append(ln)
+        if ln.strip() == "[Timer]":
+            out.append(f"OnCalendar={oncal}")
+    tf.write_text("\n".join(out) + "\n")
+    subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
+    r = subprocess.run(["systemctl", "--user", "enable", "--now", "repo-steward.timer"],
+                       capture_output=True, text=True)
+    return r.returncode == 0, (r.stderr.strip() or preset)
 
 
 def run_gh(args):
@@ -98,7 +186,24 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/api/status":
-            return self._json(200, {"tick_active": tick_active(), "mode": steward_mode()})
+            active = tick_active()
+            return self._json(200, {
+                "tick_active": active,
+                "mode": steward_mode(),
+                "elapsed_sec": tick_elapsed_sec() if active else None,
+                "eta_sec": eta_sec(),
+                "schedule": current_schedule(),
+            })
+        if self.path == "/api/progress":
+            steps = []
+            p = ROOT / "progress.jsonl"
+            if p.exists():
+                for line in p.read_text().splitlines()[-60:]:
+                    try:
+                        steps.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+            return self._json(200, {"steps": steps})
         if self.path == "/api/metrics":
             def read_jsonl(name):
                 p = ROOT / name
@@ -166,6 +271,12 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(500, {"error": "no 'mode:' line found in config.yaml"})
             cfg_path.write_text(cfg)
             return self._json(200, {"mode": new_mode})
+
+        if self.path == "/api/schedule":
+            ok, detail = set_schedule(req.get("preset", ""))
+            if not ok:
+                return self._json(400, {"error": detail})
+            return self._json(200, {"schedule": current_schedule()})
 
         if self.path == "/api/approve":
             if tick_active():
