@@ -95,15 +95,18 @@
     var allCards = [allCard].concat(cards);
 
     // Slim decisions alert (urgency-first) + filter context bar.
+    // Insert the lens block AFTER the header (header is main's first child).
+    var hdr = main.querySelector('header');
+    var anchor = hdr || main.firstChild;
     var decAlert = document.createElement('div');
     decAlert.className = 'dec-alert';
     decAlert.innerHTML = '<span data-txt></span><button>View decisions ↓</button>';
-    main.insertBefore(decAlert, main.firstChild);
-    main.insertBefore(secRepos, decAlert.nextSibling);
+    anchor.insertAdjacentElement('afterend', decAlert);
+    decAlert.insertAdjacentElement('afterend', secRepos);
     var fbar = document.createElement('div');
     fbar.className = 'fbar';
     fbar.innerHTML = '<span>Focused on <b data-name></b> — <span data-sum></span></span><button class="clear">✕ All repositories</button>';
-    main.insertBefore(fbar, secRepos.nextSibling);
+    secRepos.insertAdjacentElement('afterend', fbar);
     decAlert.querySelector('button').addEventListener('click', function () { if (secDec) secDec.scrollIntoView({ block: 'start', behavior: 'smooth' }); });
 
     function apply(repo) {
