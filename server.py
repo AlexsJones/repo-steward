@@ -306,6 +306,22 @@ class Handler(SimpleHTTPRequestHandler):
             if not item:
                 return self._json(404, {"error": "item not in ledger"})
             return self._json(200, {"item": item})
+        if parsed.path == "/api/ghstate":
+            qs = parse_qs(parsed.query)
+            repo = qs.get("repo", [""])[0]
+            num = qs.get("num", [""])[0]
+            kind = qs.get("kind", ["issue"])[0]
+            if "/" not in repo or not num.isdigit():
+                return self._json(400, {"error": "repo=owner/name & numeric num required"})
+            ep = "pulls" if kind == "pr" else "issues"
+            ok, out = run_gh(["api", f"repos/{repo}/{ep}/{num}",
+                              "--jq", "{state:.state, merged:(.merged // false)}"])
+            if not ok:
+                return self._json(200, {"state": "unknown", "merged": False})
+            try:
+                return self._json(200, json.loads(out))
+            except json.JSONDecodeError:
+                return self._json(200, {"state": "unknown", "merged": False})
         if self.path == "/api/metrics":
             def read_jsonl(name):
                 p = ROOT / name

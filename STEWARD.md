@@ -55,6 +55,19 @@ last action, items that closed. Update the ledger, then set cursor to now (UTC I
 A repo seen for the first time gets its ledger initialized with every open
 item at status `backlog`.
 
+### 1a. Reconcile open decisions (do this every tick)
+The sync above only lists **open** items — so an escalated PR/issue the
+maintainer merged or closed directly will have vanished from those lists, NOT
+appear as resolved. For every open decision in `escalations.md`, explicitly
+re-check its referenced item(s): `gh pr view <n> -R <repo> --json state,merged`
+or `gh issue view <n> -R <repo> --json state`. If an item is merged/closed, or
+the maintainer has clearly decided it in a comment, mark that escalation
+`✅ RESOLVED` (with a one-line note on what they did) and DROP it from Decisions
+needed. Never leave a decided item sitting in the queue — that is the single
+most annoying failure mode for the maintainer. If resolution leaves cleanup
+(e.g. they merged #650 of a #650/#651 pair, so #651 is now superseded), note
+the cleanup as a light in-flight item, not a standing decision.
+
 ### 1b. Site incidents
 `uptime_check.py` probes the `sites:` from config every few minutes and logs
 transitions to `incidents.jsonl`. Read entries newer than the last tick:

@@ -109,7 +109,9 @@
     secRepos.insertAdjacentElement('afterend', fbar);
     decAlert.querySelector('button').addEventListener('click', function () { if (secDec) secDec.scrollIntoView({ block: 'start', behavior: 'smooth' }); });
 
+    var currentFilter = '';
     function apply(repo) {
+      currentFilter = repo || '';
       allCards.forEach(function (c) {
         var isSel = (c.dataset.repoName || '') === (repo || '');
         c.classList.toggle('sel', isSel);
@@ -139,6 +141,39 @@
     });
     fbar.querySelector('.clear').addEventListener('click', function () { apply(''); });
     apply('');
+
+    // Live reconcile: a decision you settled directly on GitHub (merged/closed)
+    // shouldn't keep nagging you until the next tick. Check each decision's
+    // referenced items and demote resolved ones — non-destructive, the steward
+    // clears them properly on its next run.
+    css.textContent +=
+      '.decision.resolved{opacity:.5}' +
+      '.decision .resolved-tag{display:inline-block;margin-left:8px;font-size:11px;font-weight:600;' +
+      'color:var(--ok);background:var(--ok-soft);padding:1px 8px;border-radius:999px;vertical-align:middle}';
+    if (secDec) secDec.querySelectorAll('.decision').forEach(function (d) {
+      var refs = Array.prototype.slice.call(d.querySelectorAll('a[href*="/pull/"], a[href*="/issues/"]'))
+        .map(function (a) { var m = a.getAttribute('href').match(/github\.com\/([^/]+\/[^/]+)\/(pull|issues)\/(\d+)/); return m ? { repo: m[1], kind: m[2] === 'pull' ? 'pr' : 'issue', num: m[3] } : null; })
+        .filter(Boolean);
+      if (!refs.length) return;
+      Promise.all(refs.map(function (r) {
+        return fetch('/api/ghstate?repo=' + encodeURIComponent(r.repo) + '&num=' + r.num + '&kind=' + r.kind)
+          .then(function (x) { return x.json(); }).catch(function () { return { state: 'unknown' }; });
+      })).then(function (states) {
+        var anyMerged = states.some(function (s) { return s.merged; });
+        var allClosed = states.length && states.every(function (s) { return s.state === 'closed'; });
+        if (!(anyMerged || allClosed)) return;
+        d.classList.add('resolved');
+        d.removeAttribute('data-flt');           // exclude from counts + alert
+        var h3 = d.querySelector('h3');
+        if (h3 && !h3.querySelector('.resolved-tag')) {
+          var t = document.createElement('span');
+          t.className = 'resolved-tag';
+          t.textContent = anyMerged ? '✓ merged on GitHub' : '✓ closed on GitHub';
+          h3.appendChild(t);
+        }
+        apply(currentFilter);                    // recompute decision count + alert
+      });
+    });
   }
 
   // Collapsible sections: every h2 toggles its section's content; state
