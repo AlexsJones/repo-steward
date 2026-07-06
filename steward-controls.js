@@ -315,18 +315,25 @@
     a.style.cssText = 'margin-left:auto;font:600 11.5px ui-monospace,Menlo,monospace;padding:2px 10px;border-radius:999px;border:1px solid var(--ok);background:var(--ok-soft);color:var(--ok);cursor:pointer;';
     a.addEventListener('click', function (ev) {
       ev.preventDefault(); ev.stopPropagation();
-      if (!confirm('Post to GitHub as you: ' + d.dataset.repo + ' ' + d.dataset.items + '?')) return;
-      a.disabled = true; a.textContent = 'posting…';
-      fetch('/api/approve', { method: 'POST', body: JSON.stringify({ repo: d.dataset.repo, items: items }) })
-        .then(function (r) { return r.json(); })
-        .then(function (res) {
-          var ok = res.outcomes && Object.values(res.outcomes).every(function (o) { return o.ok; });
-          a.textContent = ok ? '✓ posted' : 'failed — see approvals.jsonl';
-          a.dataset.done = '1';
-          if (!ok) { a.style.borderColor = 'var(--crit)'; a.style.color = 'var(--crit)'; a.style.background = 'var(--crit-soft)'; a.disabled = false; delete a.dataset.done; }
-          if (res.error) { alert(res.error); a.textContent = 'Approve & post'; a.disabled = false; }
-        })
-        .catch(function () { a.textContent = 'failed'; a.disabled = false; });
+      modal({
+        title: 'Post to GitHub?',
+        body: 'This posts the staged review/reply for <strong>' + d.dataset.repo + ' ' + d.dataset.items +
+          '</strong> to GitHub <strong>under your account</strong>, signed by the steward. It never merges or closes.',
+        confirm: 'Post', tone: 'ok'
+      }).then(function (go) {
+        if (!go) return;
+        a.disabled = true; a.textContent = 'posting…';
+        fetch('/api/approve', { method: 'POST', body: JSON.stringify({ repo: d.dataset.repo, items: items }) })
+          .then(function (r) { return r.json(); })
+          .then(function (res) {
+            var ok = res.outcomes && Object.values(res.outcomes).every(function (o) { return o.ok; });
+            a.textContent = ok ? '✓ posted' : 'failed — see approvals.jsonl';
+            a.dataset.done = '1';
+            if (!ok) { a.style.borderColor = 'var(--crit)'; a.style.color = 'var(--crit)'; a.style.background = 'var(--crit-soft)'; a.disabled = false; delete a.dataset.done; }
+            if (res.error) { alert(res.error); a.textContent = 'Approve & post'; a.disabled = false; }
+          })
+          .catch(function () { a.textContent = 'failed'; a.disabled = false; });
+      });
     });
     d.querySelector('summary').appendChild(a);
   });
@@ -366,23 +373,37 @@
       function finish(b, label) { b.textContent = label; b.dataset.done = '1'; [approve, dismiss, more].forEach(function (x) { x.disabled = true; }); row.style.opacity = 0.55; }
 
       approve.addEventListener('click', function () {
-        if (!confirm('Post the staged review to GitHub as you — ' + repo + ' ' + item + '?')) return;
-        approve.disabled = true; approve.textContent = 'posting…';
-        fetch('/api/approve', { method: 'POST', body: JSON.stringify({ repo: repo, items: [item] }) })
-          .then(function (r) { return r.json(); }).then(function (res) {
-            var ok = res.outcomes && Object.values(res.outcomes).every(function (o) { return o.ok; });
-            if (ok) { finish(approve, '✓ posted'); toast(repo + ' ' + item + ' — review posted.', 'ok'); }
-            else { approve.disabled = false; approve.textContent = '✓ Approve'; alert(res.error || 'post failed — see approvals.jsonl'); }
-          }).catch(function () { approve.disabled = false; approve.textContent = '✓ Approve'; });
+        modal({
+          title: 'Approve & post?',
+          body: 'Posts the steward\'s staged review for <strong>' + repo + ' ' + item +
+            '</strong> to GitHub <strong>under your account</strong>, signed. It approves the PR but never merges it.',
+          confirm: 'Approve & post', tone: 'ok'
+        }).then(function (go) {
+          if (!go) return;
+          approve.disabled = true; approve.textContent = 'posting…';
+          fetch('/api/approve', { method: 'POST', body: JSON.stringify({ repo: repo, items: [item] }) })
+            .then(function (r) { return r.json(); }).then(function (res) {
+              var ok = res.outcomes && Object.values(res.outcomes).every(function (o) { return o.ok; });
+              if (ok) { finish(approve, '✓ posted'); toast(repo + ' ' + item + ' — review posted.', 'ok'); }
+              else { approve.disabled = false; approve.textContent = '✓ Approve'; alert(res.error || 'post failed — see approvals.jsonl'); }
+            }).catch(function () { approve.disabled = false; approve.textContent = '✓ Approve'; });
+        });
       });
 
       dismiss.addEventListener('click', function () {
-        if (!confirm('Dismiss ' + repo + ' ' + item + '? It drops off the queue; nothing is posted.')) return;
-        fetch('/api/dismiss', { method: 'POST', body: JSON.stringify({ repo: repo, items: [item] }) })
-          .then(function (r) { return r.json(); }).then(function (res) {
-            if (res.error) { alert(res.error); return; }
-            finish(dismiss, '✗ dismissed'); toast(repo + ' ' + item + ' dismissed.', 'warn');
-          }).catch(function () { alert('dismiss failed — is the API up?'); });
+        modal({
+          title: 'Dismiss this?',
+          body: '<strong>' + repo + ' ' + item + '</strong> drops off the queue and nothing is posted to GitHub. ' +
+            'The steward won\'t re-surface it unless the PR changes.',
+          confirm: 'Dismiss', tone: 'warn'
+        }).then(function (go) {
+          if (!go) return;
+          fetch('/api/dismiss', { method: 'POST', body: JSON.stringify({ repo: repo, items: [item] }) })
+            .then(function (r) { return r.json(); }).then(function (res) {
+              if (res.error) { alert(res.error); return; }
+              finish(dismiss, '✗ dismissed'); toast(repo + ' ' + item + ' dismissed.', 'warn');
+            }).catch(function () { alert('dismiss failed — is the API up?'); });
+        });
       });
 
       var detailRow = null;
