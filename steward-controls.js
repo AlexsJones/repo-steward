@@ -284,5 +284,80 @@
     });
     d.querySelector('summary').appendChild(a);
   });
+
+  // Inline row actions on the "Ready for your final look" table: approve,
+  // dismiss, and expand-to-read the staged review — no click-through to GitHub.
+  var readySec = Array.prototype.slice.call(document.querySelectorAll('main > section'))
+    .filter(function (s) { var h = s.querySelector('h2'); return h && /ready for/i.test(h.textContent); })[0];
+  if (readySec) {
+    readySec.querySelectorAll('table tr').forEach(function (row) {
+      if (!row.querySelector('td')) return;               // skip header
+      var repo = row.dataset.repo, item = row.dataset.item;
+      var link = row.querySelector('a[href*="/pull/"], a[href*="/issues/"]');
+      if ((!repo || !item) && link) {
+        var m = link.getAttribute('href').match(/github\.com\/[^/]+\/([^/]+)\/(pull|issues)\/(\d+)/);
+        if (m) { repo = m[1]; item = (m[2] === 'pull' ? 'pr-' : 'issue-') + m[3]; }
+      }
+      if (!repo || !item) return;
+
+      var cell = row.lastElementChild;
+      var bar = document.createElement('div');
+      bar.style.cssText = 'display:flex;gap:5px;margin-top:6px;';
+      function mk(txt, tone, title) {
+        var b = document.createElement('button');
+        b.textContent = txt; b.title = title;
+        b.style.cssText = 'font:600 12px ui-monospace,Menlo,monospace;padding:3px 9px;border-radius:6px;cursor:pointer;' +
+          'border:1px solid var(--' + tone + ');background:var(--' + tone + '-soft);color:var(--' + tone + ');';
+        return b;
+      }
+      var approve = mk('✓ Approve', 'ok', 'Post the staged review to GitHub as you');
+      var dismiss = mk('✗ Dismiss', 'crit', 'Drop from the queue without posting');
+      var more = mk('⌄', 'accent', 'Read the staged review');
+      approve.className = dismiss.className = 'approve-btn';
+      bar.appendChild(approve); bar.appendChild(dismiss); bar.appendChild(more);
+      cell.appendChild(bar);
+
+      function finish(b, label) { b.textContent = label; b.dataset.done = '1'; [approve, dismiss, more].forEach(function (x) { x.disabled = true; }); row.style.opacity = 0.55; }
+
+      approve.addEventListener('click', function () {
+        if (!confirm('Post the staged review to GitHub as you — ' + repo + ' ' + item + '?')) return;
+        approve.disabled = true; approve.textContent = 'posting…';
+        fetch('/api/approve', { method: 'POST', body: JSON.stringify({ repo: repo, items: [item] }) })
+          .then(function (r) { return r.json(); }).then(function (res) {
+            var ok = res.outcomes && Object.values(res.outcomes).every(function (o) { return o.ok; });
+            if (ok) { finish(approve, '✓ posted'); toast(repo + ' ' + item + ' — review posted.', 'ok'); }
+            else { approve.disabled = false; approve.textContent = '✓ Approve'; alert(res.error || 'post failed — see approvals.jsonl'); }
+          }).catch(function () { approve.disabled = false; approve.textContent = '✓ Approve'; });
+      });
+
+      dismiss.addEventListener('click', function () {
+        if (!confirm('Dismiss ' + repo + ' ' + item + '? It drops off the queue; nothing is posted.')) return;
+        fetch('/api/dismiss', { method: 'POST', body: JSON.stringify({ repo: repo, items: [item] }) })
+          .then(function (r) { return r.json(); }).then(function (res) {
+            if (res.error) { alert(res.error); return; }
+            finish(dismiss, '✗ dismissed'); toast(repo + ' ' + item + ' dismissed.', 'warn');
+          }).catch(function () { alert('dismiss failed — is the API up?'); });
+      });
+
+      var detailRow = null;
+      more.addEventListener('click', function () {
+        if (detailRow) { detailRow.remove(); detailRow = null; more.textContent = '⌄'; return; }
+        fetch('/api/staged?repo=' + encodeURIComponent(repo) + '&item=' + encodeURIComponent(item))
+          .then(function (r) { return r.json(); }).then(function (res) {
+            var body = res.item && res.item.staged_actions && res.item.staged_actions
+              .map(function (a) { return a.body || (a.labels ? 'labels: ' + a.labels.join(', ') : ''); })
+              .filter(Boolean).join('\n\n— — —\n\n') || '(no staged text recorded for this item)';
+            detailRow = document.createElement('tr');
+            var td = document.createElement('td');
+            td.colSpan = row.children.length;
+            td.innerHTML = '<pre style="margin:0;white-space:pre-wrap;word-break:break-word;font:12.5px/1.55 ui-monospace,Menlo,monospace;background:var(--panel-2);padding:12px 14px;border-radius:6px;color:var(--ink)"></pre>';
+            td.querySelector('pre').textContent = body;
+            detailRow.appendChild(td);
+            row.parentNode.insertBefore(detailRow, row.nextSibling);
+            more.textContent = '⌃';
+          }).catch(function () { alert('could not load staged text'); });
+      });
+    });
+  }
   }
 })();

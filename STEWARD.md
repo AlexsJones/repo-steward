@@ -136,6 +136,11 @@ Non-negotiable template invariants when regenerating:
 - Keep the `metrics →` link chip in the header statusline. `metrics.html` is a
   static tracked file that reads live data from `/api/metrics` — never
   regenerate or edit it during a tick.
+- In the "Ready for your final look" table, give each `<tr>` a
+  `data-repo="<short-repo>" data-item="<ledger key>"` (e.g.
+  `data-repo="llmfit" data-item="pr-646"`) and keep the PR/issue link in the
+  row. The controls script adds inline ✓ approve / ✗ dismiss / ⌄ expand
+  buttons from these (falling back to the link href if the attrs are absent).
 
 If the Artifact tool is available in this session and `dashboard.artifact_url`
 in config is non-empty, additionally publish there (pass it as `url`). If the

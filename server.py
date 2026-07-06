@@ -9,7 +9,10 @@ Static file serving plus a minimal control API:
   POST /api/mode              -> {"mode": "draft"|"live"}  (rewrites config.yaml)
   POST /api/schedule          -> {"preset": "manual"|"hourly"|"6h"|"daily"|"weekly"}
   POST /api/limits            -> {"substantive": N, "light": N}  (per-tick work caps)
+  GET  /api/staged?repo=&item= -> the ledger item (staged review text, verdict)
   POST /api/approve           -> execute a staged action set via gh
+        body: {"repo": "llmfit", "items": ["pr-646", ...]}
+  POST /api/dismiss           -> mark items dismissed (drops off the queue, posts nothing)
         body: {"repo": "llmfit", "items": ["pr-646", ...]}
 
 Approvals run under the local gh auth — i.e. as Alex, because a human clicked.
@@ -22,6 +25,7 @@ import subprocess
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlparse, parse_qs
 
 ROOT = Path(__file__).resolve().parent
 PORT = int(os.environ.get("STEWARD_PORT", "8377"))
@@ -234,6 +238,18 @@ class Handler(SimpleHTTPRequestHandler):
                     except json.JSONDecodeError:
                         pass
             return self._json(200, {"steps": steps})
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/staged":
+            qs = parse_qs(parsed.query)
+            short = qs.get("repo", [""])[0]
+            key = qs.get("item", [""])[0]
+            ledger_path = ROOT / "state" / f"{short}.json"
+            if not ledger_path.exists():
+                return self._json(404, {"error": "no ledger for repo"})
+            item = json.loads(ledger_path.read_text())["items"].get(key)
+            if not item:
+                return self._json(404, {"error": "item not in ledger"})
+            return self._json(200, {"item": item})
         if self.path == "/api/metrics":
             def read_jsonl(name):
                 p = ROOT / name
@@ -313,6 +329,31 @@ class Handler(SimpleHTTPRequestHandler):
             if not ok:
                 return self._json(400, {"error": detail})
             return self._json(200, {"limits": detail})
+
+        if self.path == "/api/dismiss":
+            if tick_active():
+                return self._json(409, {"error": "tick running — try again when it finishes"})
+            short = req.get("repo", "")
+            ledger_path = ROOT / "state" / f"{short}.json"
+            if not ledger_path.exists():
+                return self._json(400, {"error": f"unknown repo {short!r}"})
+            ledger = json.loads(ledger_path.read_text())
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            outcomes = {}
+            for key in req.get("items", []):
+                item = ledger["items"].get(key)
+                if not item:
+                    outcomes[key] = {"ok": False}
+                    continue
+                item["status"] = "dismissed"
+                item["last_action"] = "dismissed by maintainer via dashboard (not posted)"
+                item["last_action_at"] = now
+                outcomes[key] = {"ok": True}
+            ledger_path.write_text(json.dumps(ledger, indent=2))
+            with open(ROOT / "approvals.jsonl", "a") as f:
+                f.write(json.dumps({"ts": now, "repo": short, "action": "dismiss",
+                                    "outcomes": outcomes}) + "\n")
+            return self._json(200, {"outcomes": outcomes})
 
         if self.path == "/api/approve":
             if tick_active():
