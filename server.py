@@ -8,6 +8,7 @@ Static file serving plus a minimal control API:
   POST /api/tick              -> start one steward tick (refused while one runs)
   POST /api/mode              -> {"mode": "draft"|"live"}  (rewrites config.yaml)
   POST /api/schedule          -> {"preset": "manual"|"hourly"|"6h"|"daily"|"weekly"}
+  POST /api/limits            -> {"substantive": N, "light": N}  (per-tick work caps)
   POST /api/approve           -> execute a staged action set via gh
         body: {"repo": "llmfit", "items": ["pr-646", ...]}
 
@@ -58,6 +59,34 @@ def repo_map():
 def steward_mode():
     match = re.search(r"^mode:\s*(\w+)", (ROOT / "config.yaml").read_text(), re.M)
     return match.group(1) if match else "draft"
+
+
+def read_limits():
+    txt = (ROOT / "config.yaml").read_text()
+
+    def g(key, default):
+        m = re.search(r"^\s*" + key + r":\s*(\d+)", txt, re.M)
+        return int(m.group(1)) if m else default
+    return {"substantive": g("substantive_items_per_tick", 8),
+            "light": g("light_items_per_tick", 24)}
+
+
+def set_limits(sub, light):
+    try:
+        sub, light = int(sub), int(light)
+    except (TypeError, ValueError):
+        return False, "limits must be integers"
+    if not (1 <= sub <= 100 and 1 <= light <= 200):
+        return False, "out of range (substantive 1-100, light 1-200)"
+    txt = (ROOT / "config.yaml").read_text()
+    txt, n1 = re.subn(r"^(\s*substantive_items_per_tick:\s*)\d+",
+                      lambda m: m.group(1) + str(sub), txt, count=1, flags=re.M)
+    txt, n2 = re.subn(r"^(\s*light_items_per_tick:\s*)\d+",
+                      lambda m: m.group(1) + str(light), txt, count=1, flags=re.M)
+    if not (n1 and n2):
+        return False, "limits block not found in config.yaml"
+    (ROOT / "config.yaml").write_text(txt)
+    return True, {"substantive": sub, "light": light}
 
 
 def tick_active():
@@ -193,6 +222,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "elapsed_sec": tick_elapsed_sec() if active else None,
                 "eta_sec": eta_sec(),
                 "schedule": current_schedule(),
+                "limits": read_limits(),
             })
         if self.path == "/api/progress":
             steps = []
@@ -277,6 +307,12 @@ class Handler(SimpleHTTPRequestHandler):
             if not ok:
                 return self._json(400, {"error": detail})
             return self._json(200, {"schedule": current_schedule()})
+
+        if self.path == "/api/limits":
+            ok, detail = set_limits(req.get("substantive"), req.get("light"))
+            if not ok:
+                return self._json(400, {"error": detail})
+            return self._json(200, {"limits": detail})
 
         if self.path == "/api/approve":
             if tick_active():

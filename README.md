@@ -210,9 +210,18 @@ steward tick investigates the linked repo (recent commits, failed deploy
 workflows) — probes cost nothing, tokens are only spent when something
 actually breaks.
 
-## The dashboard buttons
+## The dashboard controls
 
 - **Run tick now** — starts a tick on demand (refused while one is running).
+  A progress bar and toasts show elapsed time, an ETA, and which repo is being
+  worked; the board auto-refreshes when the tick completes.
+- **Mode toggle** — flip draft ⇄ live (rewrites `config.yaml`).
+- **Schedule** — `Manual only / Hourly / Every 6h / Daily / Weekly`;
+  live-configures the systemd timer. Ticks stay button-triggerable at any
+  cadence.
+- **⚙ Tick size** — the per-run work caps (substantive + light items). Raise
+  for a bigger daily sweep, lower for cheaper, more frequent ticks. Applies to
+  the next tick, so it's safe to change while one is running.
 - **Approve & post** — appears on each staged action. Executes it via `gh`
   under *your* auth — clicking is you acting, which is why it works even in
   draft mode. Executed actions are stamped and can never double-post; the

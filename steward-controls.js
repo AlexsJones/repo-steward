@@ -135,6 +135,41 @@
   });
   header.insertBefore(sched, statusline);
 
+  // Tick-size settings: a gear opening a small popover with the per-tick work
+  // caps (config.yaml `limits`). Applies to the next tick, editable anytime.
+  var gear = document.createElement('button');
+  gear.textContent = '⚙';
+  gear.title = 'Tick size';
+  gear.style.cssText = 'font-size:16px;padding:8px 11px;border-radius:8px;border:1px solid var(--line);' +
+    'background:var(--panel);color:var(--muted);cursor:pointer;margin-left:10px;align-self:center;flex-shrink:0;';
+  header.insertBefore(gear, statusline);
+
+  var pop = document.createElement('div');
+  pop.style.cssText = 'display:none;position:fixed;top:74px;right:20px;z-index:40;background:var(--panel);' +
+    'border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.3);padding:16px;width:270px;';
+  pop.innerHTML =
+    '<div style="font:600 11px ui-monospace,Menlo,monospace;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:10px">Tick size — items worked per run</div>' +
+    '<label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:9px">Substantive <input id="lim-sub" type="number" min="1" max="100" style="width:64px;font:600 13px ui-monospace,Menlo,monospace;padding:5px 7px;border-radius:6px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink)"></label>' +
+    '<div style="font-size:11px;color:var(--muted);margin:-4px 0 10px">deep PR reviews, repro attempts, fix PRs</div>' +
+    '<label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:9px">Light <input id="lim-light" type="number" min="1" max="200" style="width:64px;font:600 13px ui-monospace,Menlo,monospace;padding:5px 7px;border-radius:6px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink)"></label>' +
+    '<div style="font-size:11px;color:var(--muted);margin:-4px 0 12px">triage, labels, delta re-reviews</div>' +
+    '<button id="lim-save" style="width:100%;font:600 13px system-ui,sans-serif;padding:8px;border-radius:7px;border:none;background:var(--accent);color:var(--panel);cursor:pointer">Save</button>';
+  document.body.appendChild(pop);
+  var limSub = pop.querySelector('#lim-sub'), limLight = pop.querySelector('#lim-light');
+  function paintLimits(l) { if (l) { limSub.value = l.substantive; limLight.value = l.light; } }
+  paintLimits(initial.limits);
+  gear.addEventListener('click', function () { pop.style.display = pop.style.display === 'none' ? 'block' : 'none'; });
+  pop.querySelector('#lim-save').addEventListener('click', function () {
+    fetch('/api/limits', { method: 'POST', body: JSON.stringify({ substantive: +limSub.value, light: +limLight.value }) })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res.error) { alert(res.error); return; }
+        pop.style.display = 'none';
+        toast('Tick size saved: ' + res.limits.substantive + ' substantive + ' + res.limits.light + ' light — applies next tick.', 'ok');
+      })
+      .catch(function () { alert('save failed — is the API up?'); });
+  });
+
   // The primary action: solid button, doubling as tick status indicator.
   var btn = document.createElement('button');
   var btnBase = 'font:600 14px system-ui,-apple-system,sans-serif;padding:10px 20px;' +
@@ -169,7 +204,9 @@
     btn.textContent = busy ? '⟳ Tick running…' : '▶ Run tick now';
     styleBtn(busy);
     strip.style.display = busy ? 'block' : 'none';
-    sched.disabled = busy;
+    // Schedule and tick-size are config changes that only affect the NEXT
+    // tick, so they stay editable while one runs — only the run/approve
+    // actions that would race the live session are disabled.
     document.querySelectorAll('.approve-btn').forEach(function (b) {
       if (!b.dataset.done) { b.disabled = busy; b.style.opacity = busy ? 0.5 : 1; }
     });
