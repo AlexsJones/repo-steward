@@ -112,10 +112,22 @@ Append one line per repo to `metrics.jsonl`:
 ### 6. Refresh the dashboard
 Regenerate `dashboard.html` (same visual structure — edit data, keep design):
 - Per-repo cards: open counts, inflow/outflow arrows since last tick.
-- **Decisions needed** (escalations) — top of page, most prominent.
-- **Ready for the maintainer** — PRs at `approve-recommend`, one-line rationale each.
+The sections are role-based and MUST NOT overlap — each staged item appears in
+exactly one of them:
+- **Decisions needed** (escalations) — top of page, most prominent. Things the
+  maintainer must choose between; not postable until they decide.
+- **Ready for your final look** — PRs at `approve-recommend` ONLY, one row each
+  with the steward's rationale. This is the recommend-to-merge shortlist; the
+  row's ⌄ expander shows the full staged review, so these are NOT repeated in
+  Staged replies below.
 - In-flight table: item, state, iterations, last steward action, next step.
-- Staged actions (draft mode): the exact review/reply text that would be posted.
+- **Staged replies** (draft mode) — every OTHER drafted outbound message this
+  tick that is not an `approve-recommend` and not itself an escalation
+  decision: triage replies to contributors, change-request reviews, and the
+  comment bodies attached to escalations. Subtitle: "Drafted correspondence the
+  steward is not recommending as a merge — read and post the ones you want."
+  Do NOT include the approve-recommend items here (they live in Ready for your
+  final look). Each block keeps `data-repo`/`data-items` for its buttons.
 - Trends: sparkline-style series from metrics.jsonl once ≥3 snapshots exist.
 
 The dashboard is served locally (systemd unit `repo-steward-dash.service`

@@ -4,18 +4,20 @@
 
 # Repo Steward
 
+> **An autonomous agent for open-source repository management.**
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f.svg)](LICENSE)
 [![Engine: Claude Code](https://img.shields.io/badge/engine-Claude%20Code%20%7C%20Codex%20%7C%20Gemini%20%7C%20opencode-1d6e62.svg)](#ai-backends)
 
-An autonomous maintainer's assistant for your open-source repos. A scheduled
-(or button-triggered) coding agent triages issues, reviews pull requests
-across multiple iterations, authors bug-fix PRs, watches your project
-websites, and keeps a live dashboard of what's happening — escalating only
-tie-breaks and design decisions to you.
+Repo Steward is an agent that runs the operational side of maintaining
+open-source repositories — triaging issues, reviewing pull requests across
+multiple iterations, authoring bug-fix PRs, and watching your project websites
+— on a schedule or a button press, keeping a live dashboard of what's happening
+and escalating only tie-breaks and design decisions to you.
 
 Built for the maintainer whose day disappears into pasting PR diffs into a
-chat window: the steward does that loop autonomously, across all your repos,
-and shows its work.
+chat window: the steward does that loop autonomously, across every repository
+you give it, and shows its work.
 
 - **Draft mode by default** — every review and reply is staged for your
   approval until you flip the live toggle; nothing speaks for you until it has

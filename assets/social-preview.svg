@@ -21,7 +21,7 @@
   <g font-family="Iowan Old Style, Palatino, Georgia, serif">
     <text x="560" y="310" font-size="88" font-weight="600" fill="#ECF5F1">Repo Steward</text>
   </g>
-  <text x="562" y="370" font-size="28" fill="#A9CFC2" font-family="system-ui, -apple-system, sans-serif">An autonomous maintainer's assistant for your</text>
-  <text x="562" y="412" font-size="28" fill="#A9CFC2" font-family="system-ui, -apple-system, sans-serif">open-source repos — triage, PR review, uptime.</text>
+  <text x="562" y="370" font-size="28" fill="#A9CFC2" font-family="system-ui, -apple-system, sans-serif">An autonomous agent for open-source</text>
+  <text x="562" y="412" font-size="28" fill="#A9CFC2" font-family="system-ui, -apple-system, sans-serif">repository management.</text>
   <text x="562" y="500" font-size="26" fill="#8FD8C4" font-family="ui-monospace, Menlo, monospace">github.com/AlexsJones/repo-steward</text>
 </svg>
