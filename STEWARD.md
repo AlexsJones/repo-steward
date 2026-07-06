@@ -41,6 +41,18 @@ last action, items that closed. Update the ledger, then set cursor to now (UTC I
 A repo seen for the first time gets its ledger initialized with every open
 item at status `backlog`.
 
+### 1b. Site incidents
+`uptime_check.py` probes the `sites:` from config every few minutes and logs
+transitions to `incidents.jsonl`. Read entries newer than the last tick:
+- **Site currently down**: investigate the linked repo — recent commits,
+  failed deploy/pages workflows (`gh run list -R <repo> --limit 10`), DNS vs
+  HTTP-level failure from the incident record. Write findings into the
+  existing escalation entry for that incident (uptime_check already created
+  one). If a specific commit/workflow broke the deploy, say so and propose the
+  fix (a revert PR counts as a substantive item).
+- **Recovered**: fold a one-line note into the dashboard activity section.
+Site checks themselves cost no tokens; only investigate on transitions.
+
 ### 2. Prioritize the work queue
 Order candidate work (highest first):
 1. PRs where a contributor pushed changes after our review — **delta re-review**

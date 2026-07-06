@@ -113,6 +113,19 @@ class Handler(SimpleHTTPRequestHandler):
                 return out
             return self._json(200, {"metrics": read_jsonl("metrics.jsonl"),
                                     "usage": read_jsonl("usage.jsonl")})
+        if self.path == "/api/uptime":
+            state_path = ROOT / "uptime_state.json"
+            state = json.loads(state_path.read_text()) if state_path.exists() else {}
+            samples = []
+            p = ROOT / "uptime.jsonl"
+            if p.exists():
+                lines = p.read_text().splitlines()[-2400:]  # ~2 days at 4 sites/5min
+                for line in lines:
+                    try:
+                        samples.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+            return self._json(200, {"state": state, "samples": samples})
         if self.path == "/":
             self.send_response(302)
             self.send_header("Location", "/dashboard.html")

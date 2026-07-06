@@ -102,6 +102,17 @@ STEWARD_CADENCE="*-*-* 07:00:00" ./install.sh
   snapshots, plus a Δ-since-baseline table, so you can see which repos are
   heating up and whether the backlog is actually shrinking.
 
+## Site uptime
+
+Add a `sites:` block to config.yaml (see the example) and the installer
+enables a token-free probe (`uptime_check.py`, every 5 minutes). Sites get
+live status chips on the dashboard and 24h-uptime/latency cards on the
+metrics page. A site is declared down after two consecutive failed probes;
+the transition is logged to `incidents.jsonl` and escalated, and the next
+steward tick investigates the linked repo (recent commits, failed deploy
+workflows) — probes cost nothing, tokens are only spent when something
+actually breaks.
+
 ## The dashboard buttons
 
 - **Run tick now** — starts a tick on demand (refused while one is running).

@@ -92,6 +92,11 @@
   </section>
 
   <section>
+    <h2>Site uptime</h2>
+    <div class="grid2" id="uptime"></div>
+  </section>
+
+  <section>
     <h2>Per-repo table</h2>
     <div class="tablewrap" id="repoTable"></div>
   </section>
@@ -126,6 +131,49 @@
       document.getElementById('tiles').innerHTML =
         '<div class="card empty">API unreachable — this page needs to be served by server.py.</div>';
     });
+  fetch('/api/uptime').then(function (r) { return r.json(); }).then(renderUptime)
+    .catch(function () {});
+
+  function renderUptime(data) {
+    var el = document.getElementById('uptime');
+    var urls = Object.keys(data.state || {});
+    if (!urls.length) {
+      el.innerHTML = '<div class="card empty" style="grid-column:1/-1">No sites configured — add a <span class="mono">sites:</span> block to config.yaml.</div>';
+      return;
+    }
+    var byUrl = {};
+    (data.samples || []).forEach(function (s) {
+      (byUrl[s.url] = byUrl[s.url] || []).push(s);
+    });
+    el.innerHTML = urls.map(function (url, ui) {
+      var st = data.state[url];
+      var host = url.replace(/^https?:\/\//, '');
+      var hist = byUrl[url] || [];
+      var dayAgo = new Date(Date.now() - 864e5).toISOString();
+      var h24 = hist.filter(function (s) { return s.ts >= dayAgo; });
+      var upPct = h24.length ? (100 * h24.filter(function (s) { return s.ok; }).length / h24.length) : null;
+      var lat = h24.filter(function (s) { return s.ok && s.ms != null; }).map(function (s) { return s.ms; }).sort(function (a, b) { return a - b; });
+      var p50 = lat.length ? lat[Math.floor(lat.length / 2)] : null;
+      var spark = '';
+      var recent = h24.slice(-100);
+      if (recent.length > 1) {
+        var W = 440, H = 46, maxMs = Math.max.apply(null, recent.map(function (s) { return s.ms || 0; })) || 1;
+        var pts = recent.map(function (s, i) {
+          return (i / (recent.length - 1) * W).toFixed(1) + ' ' + (s.ok ? (H - 4 - (s.ms || 0) / maxMs * (H - 10)).toFixed(1) : H - 2);
+        });
+        spark = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="46" role="img" aria-label="Latency, last 24h">' +
+          '<path d="M' + pts.join('L') + '" fill="none" stroke="var(--s3)" stroke-width="2"/>' +
+          recent.map(function (s, i) {
+            return s.ok ? '' : '<circle cx="' + (i / (recent.length - 1) * W).toFixed(1) + '" cy="' + (H - 4) + '" r="3" fill="var(--warn)"/>';
+          }).join('') + '</svg>';
+      }
+      return '<div class="card"><p class="chart-title"><span style="color:' + (st.ok ? 'var(--s1)' : 'var(--warn)') + '">●</span> ' +
+        host + (st.ok ? '' : ' — DOWN since ' + st.since) + '</p>' +
+        '<p class="chart-sub mono">24h uptime ' + (upPct == null ? '–' : upPct.toFixed(1) + '%') +
+        ' · p50 ' + (p50 == null ? '–' : p50 + 'ms') +
+        ' · last ' + (st.last_status || st.error || '?') + ' in ' + (st.last_ms || '?') + 'ms</p>' + spark + '</div>';
+    }).join('');
+  }
 
   function render(data) {
     var usage = (data.usage || []).filter(function (u) { return !u.error; });

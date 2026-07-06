@@ -84,8 +84,35 @@ else
   echo ">> NOTE: run claude interactively in $STEWARD_HOME once and accept the trust dialog"
 fi
 
+cat > "$UNIT_DIR/repo-steward-uptime.service" <<EOF
+[Unit]
+Description=Repo Steward uptime probe (token-free)
+
+[Service]
+Type=oneshot
+WorkingDirectory=$STEWARD_HOME
+ExecStart=$(command -v python3) $STEWARD_HOME/uptime_check.py
+EOF
+
+cat > "$UNIT_DIR/repo-steward-uptime.timer" <<EOF
+[Unit]
+Description=Repo Steward uptime probe schedule
+
+[Timer]
+OnCalendar=*:0/5
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target
+EOF
+
 systemctl --user daemon-reload
 systemctl --user enable --now repo-steward-dash.service
+# Only run the uptime probe if the user configured sites.
+if grep -qE "^sites:" "$STEWARD_HOME/config.yaml" 2>/dev/null; then
+  systemctl --user enable --now repo-steward-uptime.timer
+  echo ">> uptime probe enabled (every 5 min)"
+fi
 if $ENABLE_TIMER; then
   systemctl --user enable --now repo-steward.timer
   echo ">> timer enabled: $CADENCE (±5 min jitter)"

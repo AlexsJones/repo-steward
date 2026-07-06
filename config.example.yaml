@@ -22,6 +22,12 @@ limits:
   light_items_per_tick: 12        # labels, triage classification, delta re-reviews
   max_fix_prs_open: 3             # steward-authored fix PRs in flight at once
 
+# Optional: sites probed every few minutes by uptime_check.py (no tokens).
+# repo links the site to where the steward investigates when it goes down.
+sites:
+  - url: https://your-project.dev
+    repo: your-github-user/your-project-website
+
 dashboard:
   html: dashboard.html
   artifact_url: ""     # optional claude.ai artifact mirror; leave empty to disable
