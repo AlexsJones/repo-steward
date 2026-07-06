@@ -65,6 +65,27 @@ def steward_mode():
     return match.group(1) if match else "draft"
 
 
+def steward_signature():
+    m = re.search(r'^signature:\s*"(.*)"\s*$', (ROOT / "config.yaml").read_text(), re.M)
+    if not m:
+        return ""
+    # YAML double-quoted: turn the \n escapes into real newlines.
+    return m.group(1).replace("\\n", "\n")
+
+
+def with_signature(body):
+    """Ensure the posted body ends with the CURRENT config signature, so a
+    change to the signature (or the project URL) takes effect immediately for
+    every pending item, regardless of when it was staged."""
+    sig = steward_signature()
+    if not sig or not body or sig in body:
+        return body
+    marker = body.find("🤝")           # strip any older baked-in signature
+    if marker != -1:
+        body = body[:marker].rstrip()
+    return body + "\n\n" + sig
+
+
 def read_limits():
     txt = (ROOT / "config.yaml").read_text()
 
@@ -183,7 +204,7 @@ def run_gh(args):
 def execute_action(full_repo, number, item_type, action):
     """Execute one staged action. Returns (ok, detail)."""
     kind = action.get("kind", "")
-    body = action.get("body", "")
+    body = with_signature(action.get("body", ""))
     labels = action.get("labels", [])
     results = []
 
