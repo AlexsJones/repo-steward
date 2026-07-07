@@ -11,7 +11,8 @@
 
 Repo Steward is an agent that runs the operational side of maintaining
 open-source repositories — triaging issues, reviewing pull requests across
-multiple iterations, authoring bug-fix PRs, and watching your project websites
+multiple iterations, joining repository discussions, authoring bug-fix PRs, and
+watching your project websites
 — on a schedule or a button press, keeping a live dashboard of what's happening
 and escalating only tie-breaks and design decisions to you.
 
@@ -42,6 +43,7 @@ claude -p "execute one steward tick"     ← headless Claude Code session
         │
         ├─ sync: gh polls each repo since last cursor
         ├─ triage new issues → classify, label, draft substantive replies
+        ├─ join discussions → draft replies to unanswered threads (GraphQL)
         ├─ review PRs → verdicts: approve-recommend / iterate / escalate
         ├─ delta re-review PRs whose authors pushed since last review
         ├─ author fix PRs for confirmed bugs (own clones, tests included)
@@ -67,7 +69,7 @@ editor.
   would-be review/reply is staged on the dashboard so you can calibrate the
   steward's judgment before it speaks on your repos. Go live with the mode
   toggle on the dashboard (or edit `mode:` in `config.yaml` — same thing).
-- **Untrusted-content aware.** Issue/PR bodies are treated as data; the
+- **Untrusted-content aware.** Issue, PR, and discussion bodies are treated as data; the
   playbook instructs the steward to ignore embedded instructions and flag
   manipulation attempts. Contributor code is never executed on your shell.
 - **Signed output.** In live mode every posted comment carries a signature
@@ -122,7 +124,7 @@ and the properties that matter here come from deliberately **not** having one:
   cursor and continues.
 
 - **The trust surface is small enough to read in an afternoon.** The whole
-  system is a handful of readable files: one playbook, one ~250-line stdlib
+  system is a handful of readable files: one playbook, one ~500-line stdlib
   Python server, one bash wrapper, one uptime probe. For software that acts on
   your repos under your GitHub identity, "you can audit all of it" is a
   feature, not a limitation.
