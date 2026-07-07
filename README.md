@@ -171,9 +171,12 @@ cp config.example.yaml config.yaml   # edit: your repos, signature, limits
 Then either wait for the first scheduled tick or start one now:
 
 ```bash
-systemctl --user start repo-steward.service
-tail -f logs/tick.log
+make tick    # run one tick now
+make logs    # follow it
 ```
+
+`make help` lists every verb (`serve`, `start`, `status`, `open`,
+`timer-on/off`, `uninstall`, …) — the friendly front door to the systemd units.
 
 Open **http://localhost:8377/** — the dashboard shows decisions needing you,
 staged actions with full text, per-repo queues, and (after a few ticks)
@@ -236,28 +239,49 @@ the dashboard are read-only.
 
 ## Files
 
+The program is a handful of tracked files at the repo root; everything a
+running install generates is gitignored (per-maintainer state). The tracked set:
+
 | path | what | in git? |
 |---|---|---|
 | `STEWARD.md` | the tick playbook the agent follows — edit to change behavior | yes |
-| `server.py` | dashboard server + approve/tick API | yes |
+| `server.py` | dashboard server + approve / tick / discussion API | yes |
+| `steward-controls.js` | dashboard buttons + repo filter lens (loaded by the dashboard) | yes |
+| `tick.sh` | headless-agent wrapper each tick runs through; captures the usage envelope | yes |
+| `uptime_check.py` | token-free site probe the uptime timer runs | yes |
 | `install.sh` | generates the systemd user units | yes |
+| `Makefile` | convenience verbs over the units — `make help` | yes |
+| `.claude/settings.json` | the merge / close / force-push permission deny layer | yes |
+| `config.example.yaml` | starter config — copy to `config.yaml` | yes |
+
+Generated per install, never committed:
+
+| path | what | in git? |
+|---|---|---|
 | `config.yaml` | your repos, mode, limits, signature | no (yours) |
+| `dashboard.html` | the live board — regenerated every tick | no |
 | `state/<repo>.json` | per-repo ledger: every item's status, verdict, staged actions | no |
 | `escalations.md` | decisions parked for you | no |
-| `metrics.jsonl` | one snapshot per repo per tick → trends | no |
+| `metrics.jsonl` · `usage.jsonl` | per-tick snapshots + token/cost envelopes → trends | no |
 | `logs/tick.log` | full output of every tick | no |
 
 ## Operating it
 
+The `make` targets wrap the systemd user units — run `make help` for the list:
+
 ```bash
-systemctl --user stop repo-steward.timer      # pause future ticks
-systemctl --user start repo-steward.timer     # resume
-systemctl --user start repo-steward.service   # one tick, now
-journalctl --user -u repo-steward.service     # tick history
+make status      # dashboard / tick / timer state at a glance
+make tick        # one tick, now
+make timer-off   # pause scheduled ticks (dashboard stays up)
+make timer-on    # resume them
+make logs        # tail the tick log
+make uninstall   # disable and stop every steward unit
 ```
 
-Uninstall: `systemctl --user disable --now repo-steward.timer repo-steward-dash.service repo-steward-uptime.timer`
-and delete the `repo-steward*` unit files from `~/.config/systemd/user/`.
+These are thin wrappers over `systemctl --user` against the `repo-steward*`
+units — run those directly if you prefer (`journalctl --user -u
+repo-steward.service` for full tick history). After `make uninstall`, delete the
+`repo-steward*` unit files from `~/.config/systemd/user/` to remove them fully.
 
 ## Costs & cadence
 
