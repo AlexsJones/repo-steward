@@ -156,22 +156,63 @@ def eta_sec():
     return int(durs[len(durs) // 2])
 
 
+def eta_remaining_from_timings(chunks_done):
+    """Chunk-aware remaining-time estimate. timings.jsonl (written by tick.sh
+    from real file mtimes) records when each chunk of past ticks completed;
+    the estimate is the median time those ticks still had to run after their
+    chunks_done-th chunk. None until there are 3 samples."""
+    p = ROOT / "timings.jsonl"
+    if not p.exists():
+        return None
+    rem = []
+    for line in p.read_text().splitlines():
+        try:
+            o = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        offs = sorted(v for v in o.get("chunks", {}).values()
+                      if isinstance(v, (int, float)))
+        total = o.get("total_sec")
+        if not offs or not isinstance(total, (int, float)):
+            continue
+        reached = offs[min(chunks_done, len(offs)) - 1] if chunks_done else 0
+        rem.append(max(0, total - reached))
+    if len(rem) < 3:
+        return None
+    rem.sort()
+    return int(rem[len(rem) // 2])
+
+
 def tick_progress():
-    """Deterministic tick position: how many of the configured repos have
-    actually been touched (ledger rewritten this tick, or seen in the progress
-    feed), plus the latest free-text activity note. Does not trust the LLM's
-    self-assigned repo indices."""
+    """Deterministic tick position, measured in chunks the tick provably
+    completed: one per configured repo (ledger mtime >= tick start) plus the
+    metrics and dashboard writes. The LLM's progress feed contributes only the
+    free-text note — its self-reported timestamps and indices are never used."""
     el = tick_elapsed_sec()
     if el is None:
         return None
     start = time.time() - el - 5
-    seen = set()
-    for p in (ROOT / "state").glob("*.json"):
+
+    def touched(p):
         try:
-            if p.stat().st_mtime >= start:
-                seen.add(p.stem)
+            return p.exists() and p.stat().st_mtime >= start
         except OSError:
-            pass
+            return False
+
+    repos = repo_map()
+    synced = sum(touched(ROOT / "state" / f"{s}.json") for s in repos)
+    metrics_done = touched(ROOT / "metrics.jsonl")
+    dash_done = touched(ROOT / "dashboard.html")
+    done = synced + metrics_done + dash_done
+    total = len(repos) + 2
+    if dash_done:
+        phase = "finishing up"
+    elif metrics_done:
+        phase = "refreshing dashboard"
+    elif repos and synced >= len(repos):
+        phase = "executing work queue"
+    else:
+        phase = f"syncing repositories ({synced}/{len(repos)})"
     note = None
     prog = ROOT / "progress.jsonl"
     if prog.exists():
@@ -180,13 +221,12 @@ def tick_progress():
                 o = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            r = o.get("repo")
-            if r and r != "fleet":
-                seen.add(r)
             if o.get("phase") in ("repo", "item") and o.get("msg"):
+                r = o.get("repo")
                 note = (r + ": " if r else "") + o["msg"]
-    total = len(repo_map()) or 1
-    return {"repos_done": min(len(seen), total), "repos_total": total, "note": note}
+    return {"chunks_done": done, "chunks_total": total, "phase": phase,
+            "repos_done": min(synced, len(repos)), "repos_total": len(repos),
+            "eta_remaining_sec": eta_remaining_from_timings(done), "note": note}
 
 
 def current_schedule():
@@ -355,13 +395,30 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(400, {"error": "repo=owner/name & numeric num required"})
             ep = "pulls" if kind == "pr" else "issues"
             ok, out = run_gh(["api", f"repos/{repo}/{ep}/{num}",
-                              "--jq", "{state:.state, merged:(.merged // false)}"])
+                              "--jq", '{state:.state, merged:(.merged // false), head:(.head.sha // "")}'])
             if not ok:
                 return self._json(200, {"state": "unknown", "merged": False})
             try:
-                return self._json(200, json.loads(out))
+                res = json.loads(out)
             except json.JSONDecodeError:
                 return self._json(200, {"state": "unknown", "merged": False})
+            head = res.pop("head", "")
+            if kind == "pr" and res.get("state") == "open" and head:
+                # Latest APPROVED review, so the dashboard can mark rows that
+                # are already approved on GitHub at the current head — where
+                # the only remaining action is the maintainer's merge.
+                ok2, out2 = run_gh([
+                    "api", f"repos/{repo}/pulls/{num}/reviews", "--jq",
+                    '[.[] | select(.state=="APPROVED")] | last // {} '
+                    '| {c:(.commit_id // ""), at:(.submitted_at // "")}'])
+                if ok2:
+                    try:
+                        r = json.loads(out2)
+                        res["approved_at_head"] = bool(r.get("c")) and r["c"] == head
+                        res["approved_at"] = r.get("at", "")
+                    except json.JSONDecodeError:
+                        pass
+            return self._json(200, res)
         if self.path == "/api/metrics":
             def read_jsonl(name):
                 p = ROOT / name

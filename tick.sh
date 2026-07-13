@@ -11,6 +11,7 @@ cd "$STEWARD_HOME"
 mkdir -p logs
 
 TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+START_EPOCH="$(date +%s)"
 ENGINE="${STEWARD_ENGINE:-claude}"
 BIN="${STEWARD_ENGINE_BIN:-${CLAUDE_BIN:-claude}}"
 MODEL="${STEWARD_MODEL:-}"
@@ -65,6 +66,25 @@ case "$ENGINE" in
     echo "unknown STEWARD_ENGINE '$ENGINE'" >> logs/tick.log; exit 1
     ;;
 esac
+
+# Record real per-chunk completion offsets (seconds from tick start, from file
+# mtimes) so the dashboard can estimate remaining time by chunk, not wall clock.
+# Chunks: one per repo ledger, plus the metrics and dashboard writes.
+{
+  printf '{"ts":"%s","total_sec":%s,"chunks":{' "$TS" "$(( $(date +%s) - START_EPOCH ))"
+  first=1
+  for f in state/*.json metrics.jsonl dashboard.html; do
+    [[ -e "$f" ]] || continue
+    m="$(stat -c %Y "$f")"
+    (( m >= START_EPOCH )) || continue
+    name="$(basename "$f")"; name="${name%.json}"; name="${name%.jsonl}"; name="${name%.html}"
+    (( first )) || printf ','
+    printf '"%s":%s' "$name" "$(( m - START_EPOCH ))"
+    first=0
+  done
+  printf '}}\n'
+} >> timings.jsonl
+
 printf '{"ts":"%s","phase":"done","rc":%s,"msg":"tick complete"}\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RC" >> progress.jsonl
 exit $RC

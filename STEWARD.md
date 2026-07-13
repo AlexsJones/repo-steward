@@ -29,17 +29,22 @@ dashboard.
 
 ### Progress feed (do this throughout the tick)
 `tick.sh` resets `progress.jsonl` with a `start` line and appends a `done`
-line when the process exits. **You** append one JSON line to `progress.jsonl`
-as you move through the work, so the dashboard can show a live queue position
-and toast. Keep it cheap — one line per repo and per substantive item, not per
-API call. Schema (append only, never rewrite):
+line when the process exits. The dashboard derives tick position and timing
+**deterministically from artifacts on disk** (ledger/metrics/dashboard file
+mtimes) — nothing you write here drives the progress bar or the ETA. Your
+only job is the human-readable activity note: add one JSON line when you
+*start* each repo and one when you finish a substantive item. Keep it cheap —
+one line per repo and per substantive item, not per API call. Schema:
 ```json
-{"ts":"<iso>","phase":"repo","repo":"llmfit","idx":3,"total":9,"msg":"reviewing PRs"}
-{"ts":"<iso>","phase":"item","repo":"llmfit","ref":"pr-583","msg":"delta re-review → iterate"}
+{"phase":"repo","repo":"llmfit","msg":"reviewing PRs"}
+{"phase":"item","repo":"llmfit","ref":"pr-583","msg":"delta re-review → iterate"}
 ```
-`idx`/`total` on `phase":"repo"` drives the progress bar (repo N of the fleet).
-Emit a `repo` line when you start each repo, and an `item` line when you finish
-a substantive action on an issue/PR.
+**No timestamps, no indices, no totals — never invent any of these.** The
+server stamps arrival times from file modification, and counts repos itself.
+Add each line at the moment the thing is actually happening (if your shell
+can't append and you must use a whole-file Write, preserve all existing lines
+and add only the one new line). Never backfill a batch of lines describing
+work you did earlier — a stale feed is worse than a sparse one.
 
 ### 1. Sync
 For each repo in config (names are full `owner/repo`; state files are keyed by
@@ -65,8 +70,10 @@ so approve-to-post can comment without re-resolving it.
 
 Diff against the ledger: new items, items with new pushes/comments since our
 last action, items that closed. Update the ledger, then set cursor to now (UTC ISO).
-A repo seen for the first time gets its ledger initialized with every open
-item at status `backlog`.
+**Write the ledger file for every repo, every tick — even when nothing
+changed** (the cursor must still advance, and that write is the dashboard's
+deterministic per-repo progress signal). A repo seen for the first time gets
+its ledger initialized with every open item at status `backlog`.
 
 ### 1a. Reconcile open decisions (do this every tick)
 The sync above only lists **open** items — so an escalated PR/issue the
@@ -79,7 +86,12 @@ the maintainer has clearly decided it in a comment, mark that escalation
 needed. Never leave a decided item sitting in the queue — that is the single
 most annoying failure mode for the maintainer. If resolution leaves cleanup
 (e.g. they merged #650 of a #650/#651 pair, so #651 is now superseded), note
-the cleanup as a light in-flight item, not a standing decision.
+the cleanup as a light queued item, not a standing decision.
+
+Reconcile `ready-for-maintainer` items the same way: `gh pr view` each one;
+merged or closed → set status `done` with a one-line note, and surface it in
+Activity as an outcome ("you merged #650"). The Ready table must never
+re-render an item the maintainer already settled.
 
 ### 1b. Site incidents
 `uptime_check.py` probes the `sites:` from config every few minutes and logs
@@ -168,9 +180,24 @@ exactly one of them:
 - **Ready for your final look** — PRs at `approve-recommend` ONLY, one row each
   with the steward's rationale. This is the recommend-to-merge shortlist; the
   row's ⌄ expander shows the full staged review, so these are NOT repeated in
-  Staged replies below.
-- In-flight table: item, state, iterations, last steward action, next step;
-  grouped by repo with a `.grouprow` header per repo (the lens reads these).
+  Staged replies below. Every row must carry its posture and age, both from
+  GitHub facts: `✓ approved on GitHub <date> — awaiting your merge` when our
+  approval is already posted at the PR's current head (live mode), or `review
+  staged — approve to post` when it still needs the maintainer's click. Date
+  the row from when it FIRST reached approve-recommend, not this tick — a row
+  that has waited five days must read as five days old. Sort oldest-first so
+  long-waiting rows surface, and never re-describe an unchanged carried-over
+  row as work done "this tick".
+- **Next tick** table (replaces the old in-flight table): the forward view —
+  what the steward intends to do next tick, derived from the step-2 priority
+  order applied to the ledger as it stands at the END of this tick. One row
+  per planned action: item, planned action, and why it's queued ("delta
+  re-review when @user pushes", "triage — oldest unanswered", "queued: over
+  this tick's substantive limit"). Unfinished conversations (iterating PRs,
+  fix-PRs in flight, posted items awaiting replies) belong here as rows with
+  their wait-state. Same table structure as before, grouped by repo with a
+  `.grouprow` header per repo (the lens reads these). Label it honestly as a
+  plan, not a promise — every tick re-prioritizes against fresh inflow.
 - **Staged replies** (draft mode) — every OTHER drafted outbound message this
   tick that is not an `approve-recommend` and not itself an escalation
   decision: triage replies to contributors, change-request reviews, drafted
@@ -184,8 +211,10 @@ exactly one of them:
   also list the discussion as a light row in the in-flight table so the repo
   lens counts it. Approve-to-post routes the same way as an issue comment; the
   server posts it via the GraphQL discussion mutation.
-- **Activity & trends**: this is the tick's narrative, and it MUST stay
-  scannable — never one dense wall-of-text `<p>`. Use `<div class="card
+- **Activity & trends**: the backward view pairing with Next tick — what the
+  steward actually did LAST tick, plus outcomes it observed (items you merged/
+  closed yourself) and trends. It MUST stay scannable — never one dense
+  wall-of-text `<p>`. Use `<div class="card
   activity">` holding, in order: a muted `<p class="snapshots">` one-liner of the
   snapshot timestamps + the `metrics →` link; a bold `<p class="lead">`
   one-sentence headline for this tick (mode + the single most important fact,
@@ -252,7 +281,7 @@ discussion node id from the number, or using `discussion_id` on the item if set)
 {
   "cursor": "2026-07-05T00:00:00Z",
   "items": {
-    "pr-650": {"type":"pr","title":"...","author":"...","status":"backlog|triaged|reviewed|iterating|ready-for-maintainer|escalated|fix-in-flight|posted|dismissed","iterations":0,"last_action":null,"last_action_at":null,"verdict":null,"staged_actions":[],"notes":""},
+    "pr-650": {"type":"pr","title":"...","author":"...","status":"backlog|triaged|reviewed|iterating|ready-for-maintainer|escalated|fix-in-flight|posted|done|dismissed","iterations":0,"last_action":null,"last_action_at":null,"verdict":null,"staged_actions":[],"notes":""},
     "disc-42": {"type":"discussion","title":"...","author":"...","status":"backlog|triaged|posted|dismissed","discussion_id":"D_kwDO...","category":"Q&A","is_answered":false,"iterations":0,"last_action":null,"last_action_at":null,"staged_actions":[],"notes":""}
   }
 }
@@ -260,4 +289,6 @@ discussion node id from the number, or using `discussion_id` on the item if set)
 Item keys are `<type>-<number>`: `pr-650`, `issue-611`, `disc-42`. Discussion
 items carry `discussion_id` (GraphQL node id) so approve-to-post can comment
 without re-resolving it. `ready-for-maintainer` and `escalated` are the only
-states a human needs to look at.
+states a human needs to look at. `done` means the maintainer merged/closed the
+item on GitHub — it drops off every dashboard section except a one-line
+outcome note in Activity.

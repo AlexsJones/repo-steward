@@ -15,7 +15,7 @@
     var secRepos = heading(/^\s*(fleet|repositories)/i);
     if (!secRepos) return;
     var secDec = heading(/decisions/i), secReady = heading(/ready for/i),
-        secFlight = heading(/in flight/i), secStaged = heading(/staged/i);
+        secFlight = heading(/in flight|next tick/i), secStaged = heading(/staged/i);
     function shortRepo(href) { var m = href && href.match(/github\.com\/[^/]+\/([^/]+)/); return m ? m[1] : null; }
 
     var css = document.createElement('style');
@@ -173,6 +173,39 @@
         }
         apply(currentFilter);                    // recompute decision count + alert
       });
+    });
+
+    // Same live reconcile for "Ready for your final look": a PR you merged or
+    // closed directly drops out, and a PR whose approval is already posted on
+    // GitHub at its current head gets a posture badge with its age — so rows
+    // that only await your merge stop masquerading as fresh recommendations.
+    css.textContent +=
+      'tr.resolved{opacity:.45}tr.resolved td{text-decoration:line-through}' +
+      '.ready-tag{display:inline-block;margin-left:8px;font-size:11px;font-weight:600;padding:1px 8px;border-radius:999px;vertical-align:middle;white-space:nowrap}' +
+      '.ready-tag.ok{color:var(--ok);background:var(--ok-soft)}' +
+      '.ready-tag.old{color:var(--warn);background:var(--warn-soft)}';
+    function ageDays(iso) { var t = Date.parse(iso); return isNaN(t) ? null : Math.floor((Date.now() - t) / 864e5); }
+    if (secReady) secReady.querySelectorAll('tbody tr[data-flt]').forEach(function (row) {
+      var a = row.querySelector('a[href*="/pull/"]');
+      var m = a && a.getAttribute('href').match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
+      if (!m) return;
+      fetch('/api/ghstate?repo=' + encodeURIComponent(m[1]) + '&num=' + m[2] + '&kind=pr')
+        .then(function (x) { return x.json(); })
+        .then(function (s) {
+          var cell = row.querySelector('td');
+          if (!cell) return;
+          if (s.merged || s.state === 'closed') {
+            row.classList.add('resolved');
+            row.removeAttribute('data-flt');     // exclude from counts + badges
+            cell.innerHTML += ' <span class="ready-tag ok">' + (s.merged ? '✓ merged' : '✓ closed') + ' on GitHub</span>';
+            apply(currentFilter);
+          } else if (s.approved_at_head) {
+            var d = ageDays(s.approved_at);
+            var old = d != null && d >= 2;
+            cell.innerHTML += ' <span class="ready-tag ' + (old ? 'old' : 'ok') + '">✓ approved on GitHub' +
+              (d != null ? ' · ' + (d === 0 ? 'today' : d + 'd ago') : '') + ' — just needs your merge</span>';
+          }
+        }).catch(function () {});
     });
   }
 
@@ -448,16 +481,23 @@
 
   function renderProgress(status) {
     var p = status.progress || {};
-    // Deterministic position: repos actually touched this tick / total.
-    var done = p.repos_done || 0, total = p.repos_total || 0;
+    // Deterministic position: chunks (repo ledgers + metrics + dashboard)
+    // actually written this tick / total. Nothing here comes from the LLM.
+    var done = p.chunks_done != null ? p.chunks_done : (p.repos_done || 0);
+    var total = p.chunks_total || p.repos_total || 0;
     var pct = total ? Math.round(done / total * 100) : 6;
     progBar.style.width = Math.max(4, pct) + '%';
     var parts = ['elapsed ' + fmtDur(status.elapsed_sec)];
-    // Only show an ETA once it's built from enough history (server gates this).
-    if (status.eta_sec && status.eta_sec > (status.elapsed_sec || 0)) {
-      parts.push('~' + fmtDur(status.eta_sec - status.elapsed_sec) + ' left (est)');
+    // Prefer the chunk-aware estimate (median time past ticks still had to run
+    // at this chunk count); fall back to median-duration minus elapsed. Both
+    // are server-gated behind having enough history.
+    var rem = p.eta_remaining_sec;
+    if (rem == null && status.eta_sec && status.eta_sec > (status.elapsed_sec || 0)) {
+      rem = status.eta_sec - status.elapsed_sec;
     }
-    if (total) parts.push(done + '/' + total + ' repositories');
+    if (rem != null && rem > 0) parts.push('~' + fmtDur(rem) + ' left (est)');
+    if (total) parts.push(done + '/' + total + ' chunks');
+    if (p.phase) parts.push(p.phase);
     var label = 'Tick running · ' + parts.join(' · ');
     if (p.note) label += ' · ' + p.note;
     progLabel.textContent = label;
@@ -472,10 +512,11 @@
         fetch('/api/progress').then(function (r) { return r.json(); }).then(function (p) {
           var steps = p.steps || [];
           renderProgress(s);
-          // Toast the most recent per-repo transition (once each).
-          steps.filter(function (x) { return x.phase === 'repo'; }).forEach(function (x) {
-            var k = x.repo + ':' + x.idx;
-            if (!seenItemKeys[k]) { seenItemKeys[k] = 1; if (wasBusy) toast('Processing ' + x.repo + ' (' + x.idx + '/' + x.total + ')'); }
+          // Toast each per-repo note once (keyed by content — the feed
+          // carries no indices or timestamps we'd trust).
+          steps.filter(function (x) { return x.phase === 'repo' && x.repo; }).forEach(function (x) {
+            var k = x.repo + ':' + (x.msg || '');
+            if (!seenItemKeys[k]) { seenItemKeys[k] = 1; if (wasBusy) toast('Processing ' + x.repo); }
           });
         }).catch(function () {});
       }
