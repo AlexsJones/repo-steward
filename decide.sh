@@ -14,7 +14,13 @@ echo $$ > .decide.pid
 trap 'rm -f .decide.pid' EXIT
 
 TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+START_EPOCH="$(date +%s)"
 BIN="${STEWARD_ENGINE_BIN:-${CLAUDE_BIN:-$HOME/.local/bin/claude}}"
+
+# Fresh activity log for this run — the executor's structured event lines
+# (STEWARD.md step 0), folded into audit.jsonl below. decide.sh never runs
+# alongside a tick, so the file is ours for the duration.
+: > activity.jsonl
 PROMPT="Read $STEWARD_HOME/STEWARD.md (the guardrails and step 0) and execute the pending maintainer decisions in $STEWARD_HOME/decisions.jsonl now, exactly as step 0 describes. Do not run a full tick; touch only what the decisions require."
 
 OUT="$("$BIN" -p --output-format json "$PROMPT")"
@@ -35,4 +41,17 @@ else
   { echo "=== decide $TS (rc=$RC, non-json output) ==="; echo "$OUT"; } >> logs/decide.log
   echo "{\"ts\":\"$TS\",\"rc\":$RC,\"engine\":\"claude-decide\",\"error\":\"non-json output\"}" >> usage.jsonl
 fi
+
+# Fold this run's structured activity events into the append-only decision
+# log, then the run record — ts matches this run's usage.jsonl line so a
+# later backfill dedupes against it.
+if [[ -s activity.jsonl ]]; then
+  jq -cR 'fromjson? | select(type=="object")
+          | {v:1, actor:"steward", via:"decide", event:"steward_action"} + .' \
+    activity.jsonl >> audit.jsonl || true
+fi
+DUR=$(( $(date +%s) - START_EPOCH ))
+printf '{"v":1,"ts":"%s","actor":"system","via":"decide","event":"decide_done","ok":%s,"summary":"decision run finished (rc=%s, %sm)","data":{"rc":%s,"engine":"claude-decide","duration_ms":%s}}\n' \
+  "$TS" "$([[ $RC -eq 0 ]] && echo true || echo false)" "$RC" "$(( DUR / 60 ))" "$RC" "$(( DUR * 1000 ))" >> audit.jsonl
+
 exit $RC

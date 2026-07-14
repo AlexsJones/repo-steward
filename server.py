@@ -24,6 +24,9 @@ Static file serving plus a minimal control API:
         pending for the next tick (STEWARD.md step 0)
         body: {"repo": "llmfit", "refs": [...], "title": "...", "decision": "..."}
   GET  /api/decisions         -> recent decision entries + executor state
+  GET  /api/audit?repo=&event=&limit= -> events from the decision log
+        (audit.jsonl — see audit.py for the schema; every mutating endpoint
+        here appends its event at the moment it acts)
 
 Approvals run under the local gh auth — i.e. as Alex, because a human clicked.
 Ledger writes are refused while a tick or the decision executor is active to
@@ -38,6 +41,8 @@ import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
+
+import audit
 
 ROOT = Path(__file__).resolve().parent
 PORT = int(os.environ.get("STEWARD_PORT", "8377"))
@@ -569,6 +574,15 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/watch":
             return self._json(200, {"repos": repos_config(), "resources": list(RESOURCES)})
         parsed = urlparse(self.path)
+        if parsed.path == "/api/audit":
+            qs = parse_qs(parsed.query)
+            try:
+                limit = min(int(qs.get("limit", ["200"])[0]), 2000)
+            except ValueError:
+                limit = 200
+            return self._json(200, {"events": audit.read_events(
+                limit=limit, repo=qs.get("repo", [None])[0],
+                event=qs.get("event", [None])[0])})
         if parsed.path == "/api/staged":
             qs = parse_qs(parsed.query)
             short = qs.get("repo", [""])[0]
@@ -669,6 +683,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(409, {"error": "the decision executor is running — try again shortly"})
             subprocess.run(["systemctl", "--user", "start", "--no-block",
                             "repo-steward.service"], check=False)
+            audit.append("tick_requested", "maintainer", "dashboard",
+                         summary="tick started from the dashboard")
             return self._json(200, {"started": True})
 
         if self.path == "/api/decide":
@@ -686,6 +702,12 @@ class Handler(SimpleHTTPRequestHandler):
             }
             with open(ROOT / "decisions.jsonl", "a") as f:
                 f.write(json.dumps(entry) + "\n")
+            audit.append("decision_recorded", "maintainer", "dashboard",
+                         repo=entry["repo"], ts=entry["ts"],
+                         summary=entry["title"] or entry["decision"][:120],
+                         data={"decision_ts": entry["ts"],
+                               "decision": entry["decision"][:500],
+                               "refs": entry["refs"]})
             if tick_active() or decide_active():
                 return self._json(200, {"recorded": True, "mode": "queued", "id": entry["ts"]})
             spawn_decider()
@@ -716,11 +738,18 @@ class Handler(SimpleHTTPRequestHandler):
                 if comment:
                     args += ["--comment", with_signature(comment)]
                 ok, detail = run_gh(args)
+            reason = (req.get("reason") or "").strip()
             with open(ROOT / "approvals.jsonl", "a") as f:
                 f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                                     "repo": full, "action": f"decision-{action}",
                                     "item": f"{kind}-{num}", "ok": ok, "detail": detail[:300],
-                                    "reason": (req.get("reason") or "")[:300]}) + "\n")
+                                    "reason": reason[:300]}) + "\n")
+            audit.append("terminal", "maintainer", "decide",
+                         repo=full.split("/")[1], ref=f"{kind}-{num}",
+                         ok=ok, detail=detail,
+                         summary=f"maintainer decision: {action} {kind} #{num}"
+                                 + (f" — {reason}" if reason else ""),
+                         data={"action": action})
             return self._json(200 if ok else 502, {"ok": ok, "detail": detail})
 
         if self.path == "/api/mode":
@@ -733,18 +762,27 @@ class Handler(SimpleHTTPRequestHandler):
             if not n:
                 return self._json(500, {"error": "no 'mode:' line found in config.yaml"})
             cfg_path.write_text(cfg)
+            audit.append("config_change", "maintainer", "dashboard",
+                         summary=f"mode → {new_mode}",
+                         data={"setting": "mode", "mode": new_mode})
             return self._json(200, {"mode": new_mode})
 
         if self.path == "/api/schedule":
             ok, detail = set_schedule(req.get("preset", ""))
             if not ok:
                 return self._json(400, {"error": detail})
+            audit.append("config_change", "maintainer", "dashboard",
+                         summary=f"schedule → {req.get('preset')}",
+                         data={"setting": "schedule", "preset": req.get("preset")})
             return self._json(200, {"schedule": current_schedule()})
 
         if self.path == "/api/limits":
             ok, detail = set_limits(req.get("substantive"), req.get("light"))
             if not ok:
                 return self._json(400, {"error": detail})
+            audit.append("config_change", "maintainer", "dashboard",
+                         summary=f"limits → substantive {detail['substantive']}, light {detail['light']}",
+                         data={"setting": "limits", **detail})
             return self._json(200, {"limits": detail})
 
         if self.path == "/api/watch":
@@ -753,6 +791,13 @@ class Handler(SimpleHTTPRequestHandler):
                 ok, err = set_watch(e.get("name", ""), e.get("watch"), e.get("priority"))
                 if not ok:
                     return self._json(400, {"error": err})
+                name = e.get("name", "")
+                audit.append("config_change", "maintainer", "dashboard",
+                             repo=name.split("/")[1] if "/" in name else name,
+                             summary="watch → " + ", ".join(e.get("watch") or ["(unchanged)"])
+                                     + (f"; priority {e['priority']}" if e.get("priority") else ""),
+                             data={"setting": "watch", "name": name,
+                                   "watch": e.get("watch"), "priority": e.get("priority")})
             return self._json(200, {"repos": repos_config(), "resources": list(RESOURCES)})
 
         if self.path == "/api/dismiss":
@@ -774,6 +819,9 @@ class Handler(SimpleHTTPRequestHandler):
                 item["last_action"] = "dismissed by maintainer via dashboard (not posted)"
                 item["last_action_at"] = now
                 outcomes[key] = {"ok": True}
+                audit.append("dismiss", "maintainer", "dashboard", repo=short,
+                             ref=key, ok=True, ts=now,
+                             summary="dismissed via dashboard (nothing posted)")
             ledger_path.write_text(json.dumps(ledger, indent=2))
             with open(ROOT / "approvals.jsonl", "a") as f:
                 f.write(json.dumps({"ts": now, "repo": short, "action": "dismiss",
@@ -823,6 +871,10 @@ class Handler(SimpleHTTPRequestHandler):
                                            if merged else "approved by maintainer via dashboard; posted")
                     item["last_action_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 outcomes[key] = {"ok": item_ok, "merged": merged, "detail": "; ".join(details)}
+                audit.append("approve", "maintainer", "dashboard", repo=short,
+                             ref=key, ok=item_ok, detail="; ".join(details),
+                             summary="approved via dashboard" + (" & merged" if merged else ""),
+                             data={"merged": merged})
             ledger_path.write_text(json.dumps(ledger, indent=2))
             with open(ROOT / "approvals.jsonl", "a") as f:
                 f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

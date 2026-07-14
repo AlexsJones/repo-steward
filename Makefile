@@ -9,7 +9,7 @@ DASH   := repo-steward-dash.service
 UPTIME := repo-steward-uptime.timer
 
 .DEFAULT_GOAL := help
-.PHONY: help install serve start stop restart tick timer-on timer-off status logs open uninstall
+.PHONY: help install serve start stop restart tick timer-on timer-off status logs open audit audit-backfill uninstall
 
 help: ## List targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -49,6 +49,14 @@ logs: ## Tail the tick log
 
 open: ## Open the dashboard in a browser
 	@xdg-open http://localhost:$(PORT)/ >/dev/null 2>&1 || echo "open http://localhost:$(PORT)/"
+
+audit: ## Show the last 25 decision-log events
+	@test -s audit.jsonl && tail -n 25 audit.jsonl \
+	  | jq -r '"\(.ts)  \(.actor)\t\(.event)\t\(if .repo then .repo + " " + (.ref // "") else "" end)\t\(.summary // .detail // "")"' \
+	  || echo "no audit.jsonl yet — run 'make audit-backfill' to migrate existing history"
+
+audit-backfill: ## Fold pre-existing history (approvals/decisions/usage) into the decision log
+	python3 audit.py backfill
 
 uninstall: ## Disable and stop every steward unit
 	-$(SC) disable --now $(TIMER) $(DASH) $(UPTIME) $(SVC)

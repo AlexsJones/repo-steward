@@ -13,6 +13,8 @@ uptime_state.json
 incidents.jsonl
 decisions.jsonl
 timings.jsonl
+audit.jsonl
+activity.jsonl
 dashboard.html
 .claude/settings.local.json
 __pycache__/

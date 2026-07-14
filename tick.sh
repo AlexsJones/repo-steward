@@ -31,6 +31,11 @@ if [[ -s decisions.jsonl ]] && \
   bash decide.sh || true
 fi
 
+# Fresh activity log for this tick — the steward's structured event lines
+# (STEWARD.md "Activity log"), folded into audit.jsonl when the tick ends.
+# Reset AFTER the decide drain: decide.sh folds its own slice.
+: > activity.jsonl
+
 case "$ENGINE" in
   claude)
     OUT="$("$BIN" -p ${MODEL:+--model "$MODEL"} --output-format json "$PROMPT")"
@@ -95,6 +100,19 @@ esac
   done
   printf '}}\n'
 } >> timings.jsonl
+
+# Fold the tick's structured activity events into the append-only decision
+# log, stamping their provenance (fromjson? drops malformed lines). Then the
+# run record itself — ts is the tick's START time, deliberately matching this
+# tick's usage.jsonl line so a later backfill dedupes against it.
+if [[ -s activity.jsonl ]]; then
+  jq -cR 'fromjson? | select(type=="object")
+          | {v:1, actor:"steward", via:"tick", event:"steward_action"} + .' \
+    activity.jsonl >> audit.jsonl || true
+fi
+DUR=$(( $(date +%s) - START_EPOCH ))
+printf '{"v":1,"ts":"%s","actor":"system","via":"tick","event":"tick_done","ok":%s,"summary":"tick finished (rc=%s, %sm)","data":{"rc":%s,"engine":"%s","duration_ms":%s}}\n' \
+  "$TS" "$([[ $RC -eq 0 ]] && echo true || echo false)" "$RC" "$(( DUR / 60 ))" "$RC" "$ENGINE" "$(( DUR * 1000 ))" >> audit.jsonl
 
 printf '{"ts":"%s","phase":"done","rc":%s,"msg":"tick complete"}\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RC" >> progress.jsonl

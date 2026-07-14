@@ -49,6 +49,30 @@ can't append and you must use a whole-file Write, preserve all existing lines
 and add only the one new line). Never backfill a batch of lines describing
 work you did earlier — a stale feed is worse than a sparse one.
 
+### Activity log (the durable record — also throughout the tick)
+The progress feed above is ephemeral; `activity.jsonl` is this run's slice of
+the permanent decision log (`audit.jsonl`, schema in `audit.py` — never write
+to it directly; tick.sh folds your slice in when the run ends). Append one
+JSON line per discrete thing you DO or OBSERVE, at the moment it happens,
+with a real `date -u` timestamp (same whole-file-Write append rule as the
+progress feed):
+```json
+{"ts":"<utc iso>","kind":"posted","repo":"llmfit","ref":"pr-583","summary":"posted delta re-review — approve-recommend","ok":true}
+```
+`kind` is one of:
+- `staged` — drafted something for the maintainer's click (review, reply)
+- `posted` — sent something to GitHub in live mode (review, comment, labels with it)
+- `labeled` — labels applied without a comment
+- `fix_pr` — opened/updated a steward fix PR (ref is the issue key; PR URL in summary)
+- `escalated` — added a decision to escalations.md
+- `observed` — an outcome noticed, not caused (maintainer merged #650
+  themselves, contributor closed their issue, site recovered)
+Substantive items and every outbound post get a line; routine syncs don't.
+Write summaries a reader must still understand a year later — name the thing,
+not just the verb. These events are also the source of the dashboard's
+Activity & trends bullets, so if something deserves a bullet it deserves an
+event line first.
+
 ### 0. Recorded maintainer decisions (decide.sh sessions; rare in a tick)
 The dashboard lets the maintainer type a free-text decision on any escalation;
 the server appends it to `decisions.jsonl` and runs `decide.sh` — a focused
@@ -76,6 +100,13 @@ types a clearer decision. Afterwards rewrite the entry with
 `note`), preserving every other line in the file. Update the affected ledger
 items and mark the matching escalation `✅ RESOLVED`. Never re-execute an
 entry whose status isn't `pending`.
+
+For each entry executed (or failed), also append one line to
+`activity.jsonl` so the decision log records the execution — `decision_ts` is
+the entry's own `ts`, which ties the event back to the recorded decision:
+```json
+{"ts":"<utc iso>","event":"decision_executed","repo":"<short>","ok":true,"summary":"<what you did, one line>","data":{"decision_ts":"<entry ts>"}}
+```
 
 ### 1. Sync
 For each repo in config (names are full `owner/repo`; state files are keyed by
@@ -254,7 +285,9 @@ exactly one of them:
   one-sentence headline for this tick (mode + the single most important fact,
   e.g. inflow); then a `<ul>` with one `<li>` per discrete thing that happened
   (substantive actions, in-flight re-checks, parked-decision status, site
-  incidents). One idea per bullet, links inline. The `.activity` CSS (line-height
+  incidents). Render these bullets FROM this run's `activity.jsonl` events —
+  same facts, readable phrasing; if a bullet is worth showing, its event line
+  comes first (see Activity log above). One idea per bullet, links inline. The `.activity` CSS (line-height
   1.7, list styling) already exists in the template — keep it. Sparkline-style
   per-repo series still come from metrics.jsonl once ≥3 snapshots exist.
 

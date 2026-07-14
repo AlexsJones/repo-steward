@@ -174,6 +174,31 @@ every action lands in the `approvals.jsonl` audit trail:
 - **Dismiss** — drops a staged item without posting; recorded like everything
   else.
 
+### The decision log
+
+`audit.jsonl` is the append-only, serialisable record of everything anyone
+decided or did — one JSON event per line, unified across every channel:
+your dashboard clicks (approve/dismiss), typed decisions and their
+executions, explicit merges/closes, config changes, tick runs, and the
+steward's own actions (staged reviews, live posts, fix PRs, escalations,
+observed outcomes). Steward events are written as structured lines to
+`activity.jsonl` during a run and folded in when it ends, so the activity
+you see on the dashboard is rendered from the same serialisable events the
+log keeps forever.
+
+Schema and event catalogue live in `audit.py`. Read it with
+`make audit` (last events, pretty), `GET /api/audit?repo=&event=&limit=`,
+or any jq one-liner — e.g. every terminal action ever taken:
+
+```bash
+jq -r 'select(.event=="terminal") | "\(.ts) \(.repo) \(.ref): \(.summary)"' audit.jsonl
+```
+
+An install that predates the log migrates its whole history once with
+`make audit-backfill` — it converts `approvals.jsonl`, `decisions.jsonl`,
+and `usage.jsonl` into the same format, idempotently (re-running never
+duplicates an event).
+
 ### Metrics
 
 **http://localhost:8377/metrics.html** tracks the steward itself:
@@ -264,6 +289,7 @@ running install generates is gitignored (per-maintainer state). The tracked set:
 | `steward-controls.js` | dashboard buttons, decision boxes + repo filter lens | yes |
 | `tick.sh` | headless-agent wrapper each tick runs through; captures usage + chunk timings | yes |
 | `decide.sh` | the decision executor `server.py`/`tick.sh` spawn for typed decisions | yes |
+| `audit.py` | decision-log schema, append/read helpers, history backfill | yes |
 | `uptime_check.py` | token-free site probe the uptime timer runs | yes |
 | `install.sh` | generates the systemd user units | yes |
 | `Makefile` | convenience verbs over the units — `make help` | yes |
@@ -280,6 +306,7 @@ Generated per install, never committed:
 | `escalations.md` | decisions parked for you | no |
 | `decisions.jsonl` | your typed decisions + their outcomes | no |
 | `approvals.jsonl` | audit trail of every action taken under your auth | no |
+| `audit.jsonl` · `activity.jsonl` | the unified decision log + the current run's slice of it | no |
 | `metrics.jsonl` · `usage.jsonl` · `timings.jsonl` | snapshots, token/cost envelopes, per-chunk tick timings | no |
 | `logs/tick.log` · `logs/decide.log` | full output of every tick / decision run | no |
 
