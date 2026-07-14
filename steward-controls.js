@@ -432,11 +432,52 @@
     setTimeout(function () { t.style.opacity = 0; setTimeout(function () { t.remove(); }, 250); }, kind === 'ok' ? 8000 : 5000);
   }
 
-  // Schedule dropdown: live-configures the systemd timer via /api/schedule.
+  // Header panels: ⚙ Settings consolidates every configurable option
+  // (schedule, tick size, watched repos); 📋 Audit reviews the decision log.
+  // Exclusive fixed popovers under the header — opening one closes the other.
+  var openPanel = null;
+  function makePanel(width) {
+    var p = document.createElement('div');
+    p.style.cssText = 'display:none;position:fixed;top:74px;right:20px;z-index:40;background:var(--panel);' +
+      'border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.3);padding:16px;' +
+      'width:' + width + ';max-width:calc(100vw - 40px);max-height:76vh;overflow:auto;';
+    document.body.appendChild(p);
+    return p;
+  }
+  function togglePanel(p, onOpen) {
+    if (openPanel === p) { p.style.display = 'none'; openPanel = null; return; }
+    if (openPanel) openPanel.style.display = 'none';
+    openPanel = p;
+    onOpen();
+    p.style.display = 'block';
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && openPanel) { openPanel.style.display = 'none'; openPanel = null; }
+  });
+  function navBtn(txt, title) {
+    var b = document.createElement('button');
+    b.textContent = txt; b.title = title;
+    b.style.cssText = 'font:600 12px ui-monospace,Menlo,monospace;padding:9px 11px;border-radius:8px;border:1px solid var(--line);' +
+      'background:var(--panel);color:var(--muted);cursor:pointer;margin-left:10px;align-self:center;flex-shrink:0;';
+    return b;
+  }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+  var secHdr = 'font:600 11px ui-monospace,Menlo,monospace;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 10px;';
+
+  // ⚙ Settings: schedule (applies immediately), tick size + watched repos
+  // (one Save, applies from the next tick).
+  var settingsBtn = navBtn('⚙ Settings', 'Schedule, tick size, and what the steward watches');
+  header.insertBefore(settingsBtn, statusline);
+  var spop = makePanel('460px');
+
   var sched = document.createElement('select');
   sched.title = 'Tick schedule';
-  sched.style.cssText = 'font:600 12px ui-monospace,Menlo,monospace;padding:9px 10px;border-radius:8px;' +
-    'border:1px solid var(--line);background:var(--panel);color:var(--muted);cursor:pointer;margin-left:10px;align-self:center;flex-shrink:0;';
+  sched.style.cssText = 'font:600 12px ui-monospace,Menlo,monospace;padding:7px 9px;border-radius:6px;' +
+    'border:1px solid var(--line);background:var(--panel-2);color:var(--ink);cursor:pointer;';
   [['manual', 'Manual only'], ['hourly', 'Hourly'], ['6h', 'Every 6h'],
    ['daily', 'Daily 07:00'], ['weekly', 'Weekly Mon']].forEach(function (o) {
     var opt = document.createElement('option');
@@ -455,61 +496,33 @@
       })
       .catch(function () { alert('schedule change failed — is the API up?'); });
   });
-  header.insertBefore(sched, statusline);
 
-  // Tick-size settings: a gear opening a small popover with the per-tick work
-  // caps (config.yaml `limits`). Applies to the next tick, editable anytime.
-  var gear = document.createElement('button');
-  gear.textContent = '⚙';
-  gear.title = 'Tick size';
-  gear.style.cssText = 'font-size:16px;padding:8px 11px;border-radius:8px;border:1px solid var(--line);' +
-    'background:var(--panel);color:var(--muted);cursor:pointer;margin-left:10px;align-self:center;flex-shrink:0;';
-  header.insertBefore(gear, statusline);
-
-  var pop = document.createElement('div');
-  pop.style.cssText = 'display:none;position:fixed;top:74px;right:20px;z-index:40;background:var(--panel);' +
-    'border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.3);padding:16px;width:270px;';
-  pop.innerHTML =
-    '<div style="font:600 11px ui-monospace,Menlo,monospace;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:10px">Tick size — items worked per run</div>' +
-    '<label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:9px">Substantive <input id="lim-sub" type="number" min="1" max="100" style="width:64px;font:600 13px ui-monospace,Menlo,monospace;padding:5px 7px;border-radius:6px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink)"></label>' +
-    '<div style="font-size:11px;color:var(--muted);margin:-4px 0 10px">deep PR reviews, repro attempts, fix PRs</div>' +
-    '<label style="display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:9px">Light <input id="lim-light" type="number" min="1" max="200" style="width:64px;font:600 13px ui-monospace,Menlo,monospace;padding:5px 7px;border-radius:6px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink)"></label>' +
-    '<div style="font-size:11px;color:var(--muted);margin:-4px 0 12px">triage, labels, delta re-reviews</div>' +
-    '<button id="lim-save" style="width:100%;font:600 13px system-ui,sans-serif;padding:8px;border-radius:7px;border:none;background:var(--accent);color:var(--panel);cursor:pointer">Save</button>';
-  document.body.appendChild(pop);
-  var limSub = pop.querySelector('#lim-sub'), limLight = pop.querySelector('#lim-light');
+  var lbl = 'display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:9px;';
+  var numIn = 'width:64px;font:600 13px ui-monospace,Menlo,monospace;padding:5px 7px;border-radius:6px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);';
+  var hint = 'font-size:11px;color:var(--muted);margin:-4px 0 10px;';
+  spop.innerHTML =
+    '<div style="' + secHdr + '">Schedule — when ticks run</div>' +
+    '<div data-sec="sched" style="margin-bottom:18px"></div>' +
+    '<div style="' + secHdr + '">Tick size — items worked per run</div>' +
+    '<label style="' + lbl + '">Substantive <input id="lim-sub" type="number" min="1" max="100" style="' + numIn + '"></label>' +
+    '<div style="' + hint + '">deep PR reviews, repro attempts, fix PRs</div>' +
+    '<label style="' + lbl + '">Light <input id="lim-light" type="number" min="1" max="200" style="' + numIn + '"></label>' +
+    '<div style="' + hint + 'margin-bottom:18px">triage, labels, delta re-reviews</div>' +
+    '<div style="' + secHdr + '">Watched resources — per repository</div>' +
+    '<div data-sec="watch" style="margin-bottom:14px;font-size:12px;color:var(--muted)">loading…</div>' +
+    '<button id="set-save" style="width:100%;font:600 13px system-ui,sans-serif;padding:8px;border-radius:7px;border:none;background:var(--accent);color:var(--panel);cursor:pointer">Save — applies next tick</button>';
+  spop.querySelector('[data-sec=sched]').appendChild(sched);
+  var limSub = spop.querySelector('#lim-sub'), limLight = spop.querySelector('#lim-light');
   function paintLimits(l) { if (l) { limSub.value = l.substantive; limLight.value = l.light; } }
   paintLimits(initial.limits);
-  gear.addEventListener('click', function () { pop.style.display = pop.style.display === 'none' ? 'block' : 'none'; });
-  pop.querySelector('#lim-save').addEventListener('click', function () {
-    fetch('/api/limits', { method: 'POST', body: JSON.stringify({ substantive: +limSub.value, light: +limLight.value }) })
-      .then(function (r) { return r.json(); })
-      .then(function (res) {
-        if (res.error) { alert(res.error); return; }
-        pop.style.display = 'none';
-        toast('Tick size saved: ' + res.limits.substantive + ' substantive + ' + res.limits.light + ' light — applies next tick.', 'ok');
-      })
-      .catch(function () { alert('save failed — is the API up?'); });
-  });
 
-  // Watch panel: which resources (issues / PRs / discussions) the steward
-  // tracks per repository, plus priority — config.yaml `watch:` made
-  // clickable. Saved edits apply from the next tick.
-  var eye = document.createElement('button');
-  eye.textContent = '👁 Watch';
-  eye.title = 'What the steward watches, per repository';
-  eye.style.cssText = 'font:600 12px ui-monospace,Menlo,monospace;padding:9px 11px;border-radius:8px;border:1px solid var(--line);' +
-    'background:var(--panel);color:var(--muted);cursor:pointer;margin-left:10px;align-self:center;flex-shrink:0;';
-  header.insertBefore(eye, statusline);
-  var wpop = document.createElement('div');
-  wpop.style.cssText = 'display:none;position:fixed;top:74px;right:20px;z-index:40;background:var(--panel);' +
-    'border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.3);padding:16px;width:440px;max-height:72vh;overflow:auto;';
-  document.body.appendChild(wpop);
+  var watchData = null;
   function renderWatch(data) {
+    watchData = data;
     var th = 'font:600 10.5px ui-monospace,Menlo,monospace;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:4px 6px;text-align:center;';
     var rows = data.repos.map(function (r) {
-      return '<tr data-name="' + r.name + '">' +
-        '<td style="padding:5px 8px 5px 0;font:600 12.5px ui-monospace,Menlo,monospace" title="' + r.name + '">' + r.short + '</td>' +
+      return '<tr data-name="' + esc(r.name) + '">' +
+        '<td style="padding:5px 8px 5px 0;font:600 12.5px ui-monospace,Menlo,monospace" title="' + esc(r.name) + '">' + esc(r.short) + '</td>' +
         '<td style="padding:5px 8px 5px 0"><select data-k="priority" style="font:600 12px ui-monospace,Menlo,monospace;padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink)">' +
           ['high', 'medium', 'low'].map(function (p) { return '<option' + (r.priority === p ? ' selected' : '') + '>' + p + '</option>'; }).join('') +
         '</select></td>' +
@@ -518,37 +531,117 @@
             (r.watch.indexOf(res) !== -1 ? ' checked' : '') + ' style="accent-color:var(--accent);width:15px;height:15px;cursor:pointer"></td>';
         }).join('') + '</tr>';
     }).join('');
-    wpop.innerHTML =
-      '<div style="font:600 11px ui-monospace,Menlo,monospace;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:10px">Watched resources — applies next tick</div>' +
+    spop.querySelector('[data-sec=watch]').innerHTML =
       '<table style="border-collapse:collapse;width:100%"><thead><tr>' +
       '<th style="' + th + 'text-align:left">repo</th><th style="' + th + 'text-align:left">priority</th>' +
       data.resources.map(function (res) { return '<th style="' + th + '">' + res + '</th>'; }).join('') +
-      '</tr></thead><tbody>' + rows + '</tbody></table>' +
-      '<button id="watch-save" style="width:100%;margin-top:12px;font:600 13px system-ui,sans-serif;padding:8px;border-radius:7px;border:none;background:var(--accent);color:var(--panel);cursor:pointer">Save</button>';
-    wpop.querySelector('#watch-save').addEventListener('click', function () {
-      var repos = Array.prototype.map.call(wpop.querySelectorAll('tbody tr'), function (tr) {
+      '</tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+  spop.querySelector('#set-save').addEventListener('click', function () {
+    var posts = [
+      fetch('/api/limits', { method: 'POST', body: JSON.stringify({ substantive: +limSub.value, light: +limLight.value }) })
+        .then(function (r) { return r.json(); })
+    ];
+    if (watchData) {
+      var repos = Array.prototype.map.call(spop.querySelectorAll('[data-sec=watch] tbody tr'), function (tr) {
         return {
           name: tr.dataset.name,
           priority: tr.querySelector('[data-k=priority]').value,
-          watch: data.resources.filter(function (res) { return tr.querySelector('input[data-k="' + res + '"]').checked; })
+          watch: watchData.resources.filter(function (res) { return tr.querySelector('input[data-k="' + res + '"]').checked; })
         };
       });
       var empty = repos.filter(function (r) { return !r.watch.length; });
       if (empty.length) { alert(empty[0].name + ' has nothing watched — keep at least one resource, or remove the repo from config.yaml.'); return; }
-      fetch('/api/watch', { method: 'POST', body: JSON.stringify({ repos: repos }) })
-        .then(function (r) { return r.json(); }).then(function (res) {
-          if (res.error) { alert(res.error); return; }
-          wpop.style.display = 'none';
-          toast('Watch settings saved — applies next tick.', 'ok');
-        }).catch(function () { alert('save failed — is the API up?'); });
+      posts.push(fetch('/api/watch', { method: 'POST', body: JSON.stringify({ repos: repos }) })
+        .then(function (r) { return r.json(); }));
+    }
+    Promise.all(posts).then(function (results) {
+      var err = results.filter(function (res) { return res.error; })[0];
+      if (err) { alert(err.error); return; }
+      spop.style.display = 'none'; openPanel = null;
+      toast('Settings saved — applies next tick.', 'ok');
+    }).catch(function () { alert('save failed — is the API up?'); });
+  });
+  settingsBtn.addEventListener('click', function () {
+    togglePanel(spop, function () {
+      fetch('/api/watch').then(function (r) { return r.json(); }).then(renderWatch)
+        .catch(function () { spop.querySelector('[data-sec=watch]').textContent = 'watch config unavailable — is the API up?'; });
+      fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
+        paintSched(s.schedule); paintLimits(s.limits);
+      }).catch(function () {});
+    });
+  });
+
+  // 📋 Audit: the decision log (audit.jsonl via /api/audit) — every decision
+  // and action by you, the steward, or the system, filterable in place.
+  var auditBtn = navBtn('📋 Audit', 'The decision log — everything decided and done, by whom');
+  header.insertBefore(auditBtn, modeChip);
+  var apop = makePanel('600px');
+  var AUDIT_TONE = { maintainer: 'accent', steward: 'ok', system: 'neutral' };
+  var AUDIT_ICON = { approve: '✓', dismiss: '✗', decision_recorded: '💬', decision_executed: '⚡',
+                     terminal: '⏹', config_change: '⚙', tick_requested: '▶', tick_done: '⟳',
+                     decide_done: '⚡', steward_action: '🤖' };
+  var auditEvents = [];
+  function auditRow(e) {
+    var tone = AUDIT_TONE[e.actor] || 'neutral';
+    var chipTone = tone === 'neutral' ? 'background:var(--neutral-soft);color:var(--muted)'
+      : 'background:var(--' + tone + '-soft);color:var(--' + tone + ')';
+    var failed = e.ok === false;
+    var kind = (e.data && e.data.kind) ? ' · ' + e.data.kind : '';
+    return '<div title="' + esc(JSON.stringify(e)) + '" style="padding:8px 11px;margin-bottom:6px;border-radius:7px;' +
+      'background:var(--panel-2);border-left:3px solid var(--' + (failed ? 'crit' : tone === 'neutral' ? 'line' : tone) + ')">' +
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font:11px ui-monospace,Menlo,monospace;color:var(--muted)">' +
+      '<span>' + esc((e.ts || '').replace('T', ' ').replace('Z', '')) + '</span>' +
+      '<span style="font-weight:600;padding:1px 8px;border-radius:999px;' + chipTone + '">' + esc(e.actor || '?') + '</span>' +
+      '<span>' + (AUDIT_ICON[e.event] || '·') + ' ' + esc(e.event || '?') + esc(kind) + '</span>' +
+      (e.repo ? '<span style="font-weight:600;color:var(--ink)">' + esc(e.repo) + (e.ref ? ' ' + esc(e.ref) : '') + '</span>' : '') +
+      (failed ? '<span style="font-weight:600;color:var(--crit)">failed</span>' : '') +
+      '</div>' +
+      (e.summary ? '<div style="font-size:13px;line-height:1.5;margin-top:3px">' + esc(e.summary) + '</div>' : '') +
+      (e.detail && e.detail !== e.summary ? '<div style="font-size:11.5px;color:var(--muted);margin-top:2px;word-break:break-word">' + esc(e.detail) + '</div>' : '') +
+      '</div>';
+  }
+  function renderAudit() {
+    var fActor = apop.querySelector('#aud-actor').value;
+    var fEvent = apop.querySelector('#aud-event').value;
+    var fRepo = apop.querySelector('#aud-repo').value;
+    var evs = auditEvents.filter(function (e) {
+      return (!fActor || e.actor === fActor) && (!fEvent || e.event === fEvent) && (!fRepo || e.repo === fRepo);
+    }).slice().reverse();                     // newest first
+    apop.querySelector('#aud-count').textContent = evs.length + ' event' + (evs.length === 1 ? '' : 's');
+    apop.querySelector('#aud-list').innerHTML = evs.map(auditRow).join('') ||
+      '<div style="font-size:13px;color:var(--muted);padding:8px 2px">No events match. The log starts collecting from the moment the feature landed — run <code>make audit-backfill</code> to fold in older history.</div>';
+  }
+  function loadAudit() {
+    apop.innerHTML = '<div style="' + secHdr + '">Decision log — hover a row for the raw event</div>' +
+      '<div style="display:flex;gap:7px;align-items:center;margin-bottom:12px;flex-wrap:wrap">' +
+      ['aud-actor', 'aud-event', 'aud-repo'].map(function (id) {
+        return '<select id="' + id + '" style="font:600 12px ui-monospace,Menlo,monospace;padding:5px 7px;border-radius:6px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);cursor:pointer"></select>';
+      }).join('') +
+      '<span id="aud-count" style="margin-left:auto;font:11px ui-monospace,Menlo,monospace;color:var(--muted)"></span></div>' +
+      '<div id="aud-list" style="font-size:13px;color:var(--muted)">loading…</div>';
+    fetch('/api/audit?limit=500').then(function (r) { return r.json(); }).then(function (res) {
+      auditEvents = res.events || [];
+      function fill(id, label, values) {
+        var sel = apop.querySelector('#' + id);
+        sel.innerHTML = '<option value="">' + label + '</option>' +
+          values.map(function (v) { return '<option>' + esc(v) + '</option>'; }).join('');
+        sel.addEventListener('change', renderAudit);
+      }
+      function distinct(key) {
+        var seen = {};
+        return auditEvents.map(function (e) { return e[key]; })
+          .filter(function (v) { return v && !seen[v] && (seen[v] = 1); }).sort();
+      }
+      fill('aud-actor', 'all actors', distinct('actor'));
+      fill('aud-event', 'all events', distinct('event'));
+      fill('aud-repo', 'all repos', distinct('repo'));
+      renderAudit();
+    }).catch(function () {
+      apop.querySelector('#aud-list').textContent = 'could not load the decision log — is the API up?';
     });
   }
-  eye.addEventListener('click', function () {
-    if (wpop.style.display !== 'none') { wpop.style.display = 'none'; return; }
-    fetch('/api/watch').then(function (r) { return r.json(); }).then(function (d) {
-      renderWatch(d); wpop.style.display = 'block';
-    }).catch(function () { alert('api unreachable'); });
-  });
+  auditBtn.addEventListener('click', function () { togglePanel(apop, loadAudit); });
 
   // The primary action: solid button, doubling as tick status indicator.
   var btn = document.createElement('button');
@@ -569,7 +662,7 @@
     metricsLink.style.cssText = 'font:600 12px ui-monospace,Menlo,monospace;padding:8px 13px;border-radius:8px;' +
       'border:1px solid var(--accent);background:transparent;color:var(--accent);text-decoration:none;' +
       'margin-left:auto;align-self:center;flex-shrink:0;';
-    header.insertBefore(metricsLink, modeChip);
+    header.insertBefore(metricsLink, auditBtn);
   }
 
   // Progress strip below the header: appears only while a tick runs.

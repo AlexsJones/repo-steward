@@ -138,16 +138,23 @@ STEWARD_ENGINE=custom STEWARD_ENGINE_CMD='my-agent --prompt "$PROMPT"' ./install
   each item is queued, including unfinished conversations it's waiting on.
   **Activity & trends** is the matching backward view — what it actually did
   last tick. Together they replace the old in-flight table.
-- **👁 Watch** — per-repo matrix of what the steward tracks (issues / PRs /
-  discussions) and each repo's priority; saves back to the `watch:` lists in
-  `config.yaml`, applies next tick.
-- **Mode toggle** — flip draft ⇄ live (rewrites `config.yaml`).
-- **Schedule** — `Manual only / Hourly / Every 6h / Daily / Weekly`;
-  live-configures the systemd timer. Ticks stay button-triggerable at any
-  cadence.
-- **⚙ Tick size** — the per-run work caps (substantive + light items). Raise
-  for a bigger daily sweep, lower for cheaper, more frequent ticks. Applies to
-  the next tick, so it's safe to change while one is running.
+- **Mode toggle** — flip draft ⇄ live (rewrites `config.yaml`). Stays out of
+  the settings panel on purpose: it doubles as the always-visible DRAFT/LIVE
+  banner.
+- **⚙ Settings** — every other configurable in one panel:
+  - *Schedule* — `Manual only / Hourly / Every 6h / Daily / Weekly`;
+    live-configures the systemd timer. Ticks stay button-triggerable at any
+    cadence.
+  - *Tick size* — the per-run work caps (substantive + light items). Raise
+    for a bigger daily sweep, lower for cheaper, more frequent ticks.
+  - *Watched resources* — per-repo matrix of what the steward tracks
+    (issues / PRs / discussions) and each repo's priority; saves back to the
+    `watch:` lists in `config.yaml`.
+  Everything but the schedule applies from the next tick, so it's safe to
+  change while one is running.
+- **📋 Audit** — the [decision log](#the-decision-log) in a panel: every
+  event, newest first, filterable by actor / event type / repo; hover a row
+  for the raw JSON.
 
 Buttons appear only when the page is served by `server.py`; static copies of
 the dashboard are read-only.

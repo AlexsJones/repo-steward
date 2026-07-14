@@ -299,9 +299,10 @@ Non-negotiable template invariants when regenerating:
   (server sends no charset header; without the meta tag text renders as mojibake).
 - Keep `<script id="steward-controls" src="/steward-controls.js"></script>` at
   the end of the file — it renders the "Run tick now" button, live site-status
-  chips, per-item "Approve & post" buttons, and the Repositories filter lens
-  (click-to-focus, decisions alert, filter bar) against server.py's /api
-  endpoints and the section structure above. The script is a tracked repo file;
+  chips, per-item "Approve & post" buttons, the ⚙ Settings and 📋 Audit
+  (decision log) panels, and the Repositories filter lens (click-to-focus,
+  decisions alert, filter bar) against server.py's /api endpoints and the
+  section structure above. The script is a tracked repo file;
   never inline or modify it during a tick.
 - Every staged `<details class="staged">` block MUST carry
   `data-repo="<short-repo>" data-items="<comma-separated ledger keys>"`

@@ -11,7 +11,7 @@ autonomy: full         # full = reviews, triage replies, labels, and bug-fix PRs
 # Full owner/repo names. priority: high repos are worked first each tick.
 # watch: which resources the steward tracks — any of [issues, prs,
 # discussions]. Omit it to watch all three. Also editable from the
-# dashboard's 👁 Watch panel.
+# dashboard's ⚙ Settings panel.
 repos:
   - name: your-github-user/your-hot-repo
     priority: high
