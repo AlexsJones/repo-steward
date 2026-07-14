@@ -20,6 +20,17 @@ export PROMPT="Read $STEWARD_HOME/STEWARD.md and execute one steward tick, follo
 # Fresh progress feed for this tick (the dashboard polls /api/progress).
 printf '{"ts":"%s","phase":"start","msg":"tick started"}\n' "$TS" > progress.jsonl
 
+# Drain maintainer decisions typed since the last chance to run them — they
+# unblock work and may change what this tick should do. decide.sh maintains
+# .decide.pid, which opens the server's /api/terminal gate for any explicit
+# merge/close the maintainer asked for. Entries with a `note` are awaiting the
+# maintainer's clarification, not a retry.
+if [[ -s decisions.jsonl ]] && \
+   jq -se 'map(select(.status=="pending" and (.note|not))) | length > 0' decisions.jsonl >/dev/null 2>&1; then
+  printf '{"ts":"%s","phase":"repo","msg":"executing recorded maintainer decisions"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> progress.jsonl
+  bash decide.sh || true
+fi
+
 case "$ENGINE" in
   claude)
     OUT="$("$BIN" -p ${MODEL:+--model "$MODEL"} --output-format json "$PROMPT")"

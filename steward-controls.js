@@ -203,9 +203,75 @@
             var d = ageDays(s.approved_at);
             var old = d != null && d >= 2;
             cell.innerHTML += ' <span class="ready-tag ' + (old ? 'old' : 'ok') + '">✓ approved on GitHub' +
-              (d != null ? ' · ' + (d === 0 ? 'today' : d + 'd ago') : '') + ' — just needs your merge</span>';
+              (d != null ? ' · ' + (d === 0 ? 'today' : d + 'd ago') : '') + ' — ✓ Approve & merge finishes it</span>';
           }
         }).catch(function () {});
+    });
+
+    // Decision input: type what you want done and press Enter. The server
+    // records it and, when nothing else is running, immediately spawns the
+    // decision executor (decide.sh) — a focused engine run that interprets
+    // your text and acts on it (posts, labels, closes/merges when you say so).
+    // While a tick runs it queues instead, and the next tick executes it first.
+    css.textContent +=
+      '.decide-box{display:flex;gap:8px;margin-top:10px;align-items:center}' +
+      '.decide-box input{flex:1;font:13px system-ui,-apple-system,sans-serif;padding:7px 11px;border-radius:8px;' +
+      'border:1px solid var(--neutral-soft);background:transparent;color:inherit;min-width:0}' +
+      '.decide-box input:focus{outline:none;border-color:var(--accent)}' +
+      '.decide-status{font-size:12px;color:var(--muted);white-space:nowrap}' +
+      '.decide-status.ok{color:var(--ok)}.decide-status.err{color:var(--crit)}';
+    function watchDecision(id, d, st, inp) {
+      var iv = setInterval(function () {
+        fetch('/api/decisions').then(function (r) { return r.json(); }).then(function (res) {
+          if (res.executing) return;
+          clearInterval(iv);
+          var mine = (res.decisions || []).filter(function (e) { return e.ts === id; }).pop() || {};
+          if (mine.status === 'executed') {
+            st.className = 'decide-status ok';
+            st.textContent = '✓ done' + (mine.outcome ? ': ' + mine.outcome : '');
+            d.classList.add('resolved');
+            d.removeAttribute('data-flt');
+            apply(currentFilter);
+          } else if (mine.status === 'failed') {
+            st.className = 'decide-status err';
+            st.textContent = '⚠ ' + (mine.note || 'failed — see logs/decide.log');
+          } else if (mine.note) {
+            // Executor wants clarification — reopen the box for a clearer try.
+            st.className = 'decide-status err';
+            st.textContent = '⚠ needs clarification: ' + mine.note;
+            inp.disabled = false;
+          } else {
+            st.textContent = '✓ recorded — applies when the steward is free';
+          }
+        }).catch(function () {});
+      }, 4000);
+    }
+    if (secDec) secDec.querySelectorAll('.decision').forEach(function (d) {
+      var ctx = d.textContent.trim().replace(/\s+/g, ' ').slice(0, 1500);
+      var box = document.createElement('div');
+      box.className = 'decide-box';
+      box.innerHTML = '<input type="text" placeholder="Type your decision and press Enter — e.g. ‘go with #650, close #651 as superseded’">' +
+        '<span class="decide-status"></span>';
+      d.appendChild(box);
+      var inp = box.querySelector('input'), st = box.querySelector('.decide-status');
+      inp.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' || !inp.value.trim()) return;
+        var refs = Array.prototype.slice.call(d.querySelectorAll('a[href*="/pull/"], a[href*="/issues/"]'))
+          .map(function (a) { return a.getAttribute('href'); });
+        inp.disabled = true;
+        st.className = 'decide-status';
+        st.textContent = 'sending…';
+        fetch('/api/decide', { method: 'POST', body: JSON.stringify({
+          repo: d.dataset.repo || '', refs: refs,
+          title: ((d.querySelector('h3') || {}).textContent || '').trim(),
+          context: ctx, decision: inp.value.trim()
+        }) }).then(function (r) { return r.json(); }).then(function (res) {
+          if (res.error) { st.className = 'decide-status err'; st.textContent = '⚠ ' + res.error; inp.disabled = false; return; }
+          st.className = 'decide-status ok';
+          st.textContent = res.mode === 'executing' ? '🤖 acting on it…' : '⏸ queued — applies when the steward is free';
+          watchDecision(res.id, d, st, inp);
+        }).catch(function () { st.className = 'decide-status err'; st.textContent = '⚠ failed — try again'; inp.disabled = false; });
+      });
     });
   }
 
@@ -426,6 +492,64 @@
       .catch(function () { alert('save failed — is the API up?'); });
   });
 
+  // Watch panel: which resources (issues / PRs / discussions) the steward
+  // tracks per repository, plus priority — config.yaml `watch:` made
+  // clickable. Saved edits apply from the next tick.
+  var eye = document.createElement('button');
+  eye.textContent = '👁 Watch';
+  eye.title = 'What the steward watches, per repository';
+  eye.style.cssText = 'font:600 12px ui-monospace,Menlo,monospace;padding:9px 11px;border-radius:8px;border:1px solid var(--line);' +
+    'background:var(--panel);color:var(--muted);cursor:pointer;margin-left:10px;align-self:center;flex-shrink:0;';
+  header.insertBefore(eye, statusline);
+  var wpop = document.createElement('div');
+  wpop.style.cssText = 'display:none;position:fixed;top:74px;right:20px;z-index:40;background:var(--panel);' +
+    'border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.3);padding:16px;width:440px;max-height:72vh;overflow:auto;';
+  document.body.appendChild(wpop);
+  function renderWatch(data) {
+    var th = 'font:600 10.5px ui-monospace,Menlo,monospace;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:4px 6px;text-align:center;';
+    var rows = data.repos.map(function (r) {
+      return '<tr data-name="' + r.name + '">' +
+        '<td style="padding:5px 8px 5px 0;font:600 12.5px ui-monospace,Menlo,monospace" title="' + r.name + '">' + r.short + '</td>' +
+        '<td style="padding:5px 8px 5px 0"><select data-k="priority" style="font:600 12px ui-monospace,Menlo,monospace;padding:4px 6px;border-radius:6px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink)">' +
+          ['high', 'medium', 'low'].map(function (p) { return '<option' + (r.priority === p ? ' selected' : '') + '>' + p + '</option>'; }).join('') +
+        '</select></td>' +
+        data.resources.map(function (res) {
+          return '<td style="text-align:center;padding:5px 6px"><input type="checkbox" data-k="' + res + '"' +
+            (r.watch.indexOf(res) !== -1 ? ' checked' : '') + ' style="accent-color:var(--accent);width:15px;height:15px;cursor:pointer"></td>';
+        }).join('') + '</tr>';
+    }).join('');
+    wpop.innerHTML =
+      '<div style="font:600 11px ui-monospace,Menlo,monospace;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:10px">Watched resources — applies next tick</div>' +
+      '<table style="border-collapse:collapse;width:100%"><thead><tr>' +
+      '<th style="' + th + 'text-align:left">repo</th><th style="' + th + 'text-align:left">priority</th>' +
+      data.resources.map(function (res) { return '<th style="' + th + '">' + res + '</th>'; }).join('') +
+      '</tr></thead><tbody>' + rows + '</tbody></table>' +
+      '<button id="watch-save" style="width:100%;margin-top:12px;font:600 13px system-ui,sans-serif;padding:8px;border-radius:7px;border:none;background:var(--accent);color:var(--panel);cursor:pointer">Save</button>';
+    wpop.querySelector('#watch-save').addEventListener('click', function () {
+      var repos = Array.prototype.map.call(wpop.querySelectorAll('tbody tr'), function (tr) {
+        return {
+          name: tr.dataset.name,
+          priority: tr.querySelector('[data-k=priority]').value,
+          watch: data.resources.filter(function (res) { return tr.querySelector('input[data-k="' + res + '"]').checked; })
+        };
+      });
+      var empty = repos.filter(function (r) { return !r.watch.length; });
+      if (empty.length) { alert(empty[0].name + ' has nothing watched — keep at least one resource, or remove the repo from config.yaml.'); return; }
+      fetch('/api/watch', { method: 'POST', body: JSON.stringify({ repos: repos }) })
+        .then(function (r) { return r.json(); }).then(function (res) {
+          if (res.error) { alert(res.error); return; }
+          wpop.style.display = 'none';
+          toast('Watch settings saved — applies next tick.', 'ok');
+        }).catch(function () { alert('save failed — is the API up?'); });
+    });
+  }
+  eye.addEventListener('click', function () {
+    if (wpop.style.display !== 'none') { wpop.style.display = 'none'; return; }
+    fetch('/api/watch').then(function (r) { return r.json(); }).then(function (d) {
+      renderWatch(d); wpop.style.display = 'block';
+    }).catch(function () { alert('api unreachable'); });
+  });
+
   // The primary action: solid button, doubling as tick status indicator.
   var btn = document.createElement('button');
   var btnBase = 'font:600 14px system-ui,-apple-system,sans-serif;padding:10px 20px;' +
@@ -596,7 +720,7 @@
           'border:1px solid var(--' + tone + ');background:var(--' + tone + '-soft);color:var(--' + tone + ');';
         return b;
       }
-      var approve = mk('✓ Approve', 'ok', 'Post the staged review to GitHub as you');
+      var approve = mk('✓ Approve & merge', 'ok', 'Post the staged review (if still unposted) and merge the PR as you');
       var dismiss = mk('✗ Dismiss', 'crit', 'Drop from the queue without posting');
       var more = mk('⌄', 'accent', 'Read the staged review');
       approve.className = dismiss.className = 'approve-btn';
@@ -607,19 +731,27 @@
 
       approve.addEventListener('click', function () {
         modal({
-          title: 'Approve & post?',
+          title: 'Approve & merge?',
           body: 'Posts the steward\'s staged review for <strong>' + repo + ' ' + item +
-            '</strong> to GitHub <strong>under your account</strong>, signed. It approves the PR but never merges it.',
-          confirm: 'Approve & post', tone: 'ok'
+            '</strong> to GitHub <strong>under your account</strong> (skipped if already posted), then ' +
+            '<strong>merges the PR</strong> — this was your final look.',
+          confirm: 'Approve & merge', tone: 'ok'
         }).then(function (go) {
           if (!go) return;
-          approve.disabled = true; approve.textContent = 'posting…';
+          approve.disabled = true; approve.textContent = 'merging…';
           fetch('/api/approve', { method: 'POST', body: JSON.stringify({ repo: repo, items: [item] }) })
             .then(function (r) { return r.json(); }).then(function (res) {
-              var ok = res.outcomes && Object.values(res.outcomes).every(function (o) { return o.ok; });
-              if (ok) { finish(approve, '✓ posted'); toast(repo + ' ' + item + ' — review posted.', 'ok'); }
-              else { approve.disabled = false; approve.textContent = '✓ Approve'; alert(res.error || 'post failed — see approvals.jsonl'); }
-            }).catch(function () { approve.disabled = false; approve.textContent = '✓ Approve'; });
+              var outs = res.outcomes ? Object.values(res.outcomes) : [];
+              var ok = outs.length && outs.every(function (o) { return o.ok; });
+              var merged = outs.some(function (o) { return o.merged; });
+              if (ok) {
+                finish(approve, merged ? '✓ merged' : '✓ posted');
+                toast(repo + ' ' + item + (merged ? ' — approved & merged.' : ' — review posted.'), 'ok');
+              } else {
+                approve.disabled = false; approve.textContent = '✓ Approve & merge';
+                alert(res.error || (outs[0] && outs[0].detail) || 'failed — see approvals.jsonl');
+              }
+            }).catch(function () { approve.disabled = false; approve.textContent = '✓ Approve & merge'; });
         });
       });
 

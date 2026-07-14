@@ -6,6 +6,7 @@
       "Edit",
       "Artifact",
       "Bash(gh:*)",
+      "Bash(curl -s -X POST http://localhost:8377/api/terminal:*)",
       "Bash(jq:*)",
       "Bash(git:*)",
       "Bash(date:*)",

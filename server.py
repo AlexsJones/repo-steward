@@ -9,14 +9,25 @@ Static file serving plus a minimal control API:
   POST /api/mode              -> {"mode": "draft"|"live"}  (rewrites config.yaml)
   POST /api/schedule          -> {"preset": "manual"|"hourly"|"6h"|"daily"|"weekly"}
   POST /api/limits            -> {"substantive": N, "light": N}  (per-tick work caps)
+  GET  /api/watch             -> per-repo watched resources + priority
+  POST /api/watch             -> {"repos": [{"name", "watch": [...], "priority"}]}
+        rewrites the config.yaml repos block in place (comments survive)
   GET  /api/staged?repo=&item= -> the ledger item (staged review text, verdict)
   POST /api/approve           -> execute a staged action set via gh
         body: {"repo": "llmfit", "items": ["pr-646", ...]}
+        For an approve-recommend PR this posts the review (if still unposted)
+        AND merges the PR: the maintainer's click IS the terminal decision.
   POST /api/dismiss           -> mark items dismissed (drops off the queue, posts nothing)
         body: {"repo": "llmfit", "items": ["pr-646", ...]}
+  POST /api/decide            -> record a typed maintainer decision; runs the
+        decision executor (decide.sh) immediately when idle, else leaves it
+        pending for the next tick (STEWARD.md step 0)
+        body: {"repo": "llmfit", "refs": [...], "title": "...", "decision": "..."}
+  GET  /api/decisions         -> recent decision entries + executor state
 
 Approvals run under the local gh auth — i.e. as Alex, because a human clicked.
-Ledger writes are refused while a tick is active to avoid racing the steward.
+Ledger writes are refused while a tick or the decision executor is active to
+avoid racing the steward.
 """
 import html as html_lib
 import json
@@ -60,6 +71,75 @@ def repo_map():
             full = match.group(1)
             m[full.split("/")[1]] = full
     return m
+
+
+RESOURCES = ("issues", "prs", "discussions")
+
+
+def repos_config():
+    """The repos: entries with name/priority/watch. watch defaults to every
+    resource when the key is absent."""
+    txt = (ROOT / "config.yaml").read_text()
+    m = re.search(r"^repos:\s*$(.*?)(?=^\S|\Z)", txt, re.M | re.S)
+    out = []
+    if not m:
+        return out
+    for block in re.split(r"^(?=\s*-\s*name:)", m.group(1), flags=re.M):
+        nm = re.search(r"-\s*name:\s*(\S+/\S+)", block)
+        if not nm:
+            continue
+        pr = re.search(r"^\s*priority:\s*(\w+)", block, re.M)
+        wt = re.search(r"^\s*watch:\s*\[([^\]]*)\]", block, re.M)
+        watch = ([w.strip() for w in wt.group(1).split(",") if w.strip()]
+                 if wt else list(RESOURCES))
+        full = nm.group(1)
+        out.append({"name": full, "short": full.split("/")[1],
+                    "priority": pr.group(1) if pr else "medium", "watch": watch})
+    return out
+
+
+def set_watch(name, watch=None, priority=None):
+    """Update one repo entry's watch/priority in config.yaml, touching only
+    that entry's lines so hand-written comments survive."""
+    if watch is not None:
+        bad = [w for w in watch if w not in RESOURCES]
+        if bad:
+            return False, f"unknown resources: {', '.join(bad)}"
+        if not watch:
+            return False, "watch at least one resource"
+    if priority is not None and priority not in ("high", "medium", "low"):
+        return False, "priority must be high|medium|low"
+    path = ROOT / "config.yaml"
+    lines = path.read_text().splitlines(keepends=True)
+    i = next((k for k, ln in enumerate(lines)
+              if re.match(r"\s*-\s*name:\s*" + re.escape(name) + r"\s*(#.*)?$", ln)), None)
+    if i is None:
+        return False, f"{name!r} not in config"
+    j = i + 1
+    while j < len(lines) and not re.match(r"\s*-\s*name:|^\S", lines[j]):
+        j += 1
+    block = lines[i:j]
+    if priority is not None:
+        for k, ln in enumerate(block):
+            mm = re.match(r"(\s*priority:\s*)\w+(.*)$", ln.rstrip("\n"))
+            if mm:
+                block[k] = mm.group(1) + priority + mm.group(2) + "\n"
+                break
+        else:
+            block.insert(1, "    priority: " + priority + "\n")
+    if watch is not None:
+        wline = "    watch: [" + ", ".join(w for w in RESOURCES if w in watch) + "]\n"
+        for k, ln in enumerate(block):
+            if re.match(r"\s*watch:", ln):
+                block[k] = wline
+                break
+        else:
+            k = len(block)
+            while k > 1 and block[k - 1].strip() == "":
+                k -= 1
+            block.insert(k, wline)
+    path.write_text("".join(lines[:i] + block + lines[j:]))
+    return True, None
 
 
 def steward_mode():
@@ -124,6 +204,97 @@ def tick_active():
     return state in ("active", "activating")
 
 
+# The decision executor is single-flight: one decide.sh at a time, and never
+# alongside a tick — both rewrite ledgers. decide.sh maintains .decide.pid so
+# a run spawned elsewhere (tick.sh pre-drains pending decisions) is seen too.
+DECIDER = {"proc": None, "last_spawn": 0.0}
+
+
+def decide_active():
+    p = DECIDER["proc"]
+    if p is not None and p.poll() is None:
+        return True
+    try:
+        pid = int((ROOT / ".decide.pid").read_text().strip())
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def spawn_decider():
+    DECIDER["last_spawn"] = time.time()
+    log = open(ROOT / "logs" / "decide.log", "a")
+    DECIDER["proc"] = subprocess.Popen(
+        ["bash", str(ROOT / "decide.sh")], cwd=ROOT, stdout=log, stderr=log)
+
+
+def pending_decisions():
+    """True if decisions.jsonl has entries the executor should act on.
+    Entries carrying a `note` are excluded — that's the executor asking the
+    maintainer for clarification, not work to retry."""
+    p = ROOT / "decisions.jsonl"
+    if not p.exists():
+        return False
+    for line in p.read_text().splitlines():
+        try:
+            o = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if o.get("status") == "pending" and not o.get("note"):
+            return True
+    return False
+
+
+def merge_method_flag(full_repo):
+    """gh pr merge flag: config.yaml `merge_method:` if set, else the first
+    method the repo allows (squash > merge > rebase)."""
+    m = re.search(r"^merge_method:\s*(\w+)", (ROOT / "config.yaml").read_text(), re.M)
+    if m and m.group(1) in ("merge", "squash", "rebase"):
+        return "--" + m.group(1)
+    ok, out = run_gh(["api", f"repos/{full_repo}", "--jq",
+                      '{squash:.allow_squash_merge, merge:.allow_merge_commit, rebase:.allow_rebase_merge}'])
+    if ok:
+        try:
+            allowed = json.loads(out)
+            for key in ("squash", "merge", "rebase"):
+                if allowed.get(key):
+                    return "--" + key
+        except json.JSONDecodeError:
+            pass
+    return "--squash"
+
+
+def merge_pr(full_repo, number):
+    """Merge a PR on the maintainer's behalf — only ever called from their
+    explicit dashboard approval of an approve-recommend item."""
+    flag = merge_method_flag(full_repo)
+    ok, out = run_gh(["pr", "merge", str(number), "-R", full_repo, flag])
+    if ok:
+        return True, f"merge {flag}: {(out or 'merged')[:200]}"
+    retriable = ("not up to date with the base branch" in out
+                 or ("Required status check" in out and "is expected" in out))
+    if not retriable:
+        return False, f"merge {flag}: {out[:200]}"
+    # Branch protection blocks a direct merge: the head is stale against base
+    # and/or required checks haven't reported for it. Refresh the head if it's
+    # behind, then queue auto-merge so GitHub completes the merge once the
+    # requirements are met.
+    steps = []
+    st_ok, st = run_gh(["pr", "view", str(number), "-R", full_repo,
+                        "--json", "mergeStateStatus", "--jq", ".mergeStateStatus"])
+    if st_ok and st == "BEHIND":
+        upd_ok, upd_out = run_gh(["api", "-X", "PUT",
+                                  f"repos/{full_repo}/pulls/{number}/update-branch"])
+        if not upd_ok:
+            return False, f"merge {flag}: head behind base; update-branch failed: {upd_out[:200]}"
+        steps.append("branch updated")
+    ok, out = run_gh(["pr", "merge", str(number), "-R", full_repo, flag, "--auto"])
+    if ok:
+        return True, f"merge {flag}: " + "; ".join(steps + ["auto-merge queued"])
+    return False, f"merge {flag}: " + "; ".join(steps + [f"auto-merge failed: {out[:200]}"])
+
+
 def tick_elapsed_sec():
     """Seconds the running tick has been alive, or None if not running."""
     pid = subprocess.run(
@@ -145,11 +316,16 @@ def eta_sec():
     durs = []
     for line in p.read_text().splitlines():
         try:
-            d = json.loads(line).get("duration_ms")
-            if d:
-                durs.append(d / 1000)
+            o = json.loads(line)
         except json.JSONDecodeError:
-            pass
+            continue
+        # Decision-executor runs share usage.jsonl but are not ticks —
+        # including them would drag the tick ETA down.
+        if str(o.get("engine", "")).endswith("-decide"):
+            continue
+        d = o.get("duration_ms")
+        if d:
+            durs.append(d / 1000)
     if len(durs) < 3:
         return None
     durs.sort()
@@ -355,6 +531,12 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/status":
             active = tick_active()
+            # Decisions typed while a tick ran queue up; drain them as soon as
+            # the steward is free (this poll fires every 5s while the dashboard
+            # is open). 5-minute backoff so a failing executor can't hot-loop.
+            if (not active and not decide_active() and pending_decisions()
+                    and time.time() - DECIDER["last_spawn"] > 300):
+                spawn_decider()
             return self._json(200, {
                 "tick_active": active,
                 "mode": steward_mode(),
@@ -374,6 +556,18 @@ class Handler(SimpleHTTPRequestHandler):
                     except json.JSONDecodeError:
                         pass
             return self._json(200, {"steps": steps})
+        if self.path == "/api/decisions":
+            entries = []
+            p = ROOT / "decisions.jsonl"
+            if p.exists():
+                for line in p.read_text().splitlines()[-50:]:
+                    try:
+                        entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+            return self._json(200, {"decisions": entries, "executing": decide_active()})
+        if self.path == "/api/watch":
+            return self._json(200, {"repos": repos_config(), "resources": list(RESOURCES)})
         parsed = urlparse(self.path)
         if parsed.path == "/api/staged":
             qs = parse_qs(parsed.query)
@@ -471,9 +665,63 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/tick":
             if tick_active():
                 return self._json(409, {"error": "a tick is already running"})
+            if decide_active():
+                return self._json(409, {"error": "the decision executor is running — try again shortly"})
             subprocess.run(["systemctl", "--user", "start", "--no-block",
                             "repo-steward.service"], check=False)
             return self._json(200, {"started": True})
+
+        if self.path == "/api/decide":
+            text = (req.get("decision") or "").strip()
+            if not text:
+                return self._json(400, {"error": "empty decision"})
+            entry = {
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "repo": req.get("repo", ""),
+                "refs": req.get("refs", [])[:10],
+                "title": (req.get("title") or "").strip()[:200],
+                "context": (req.get("context") or "").strip()[:2000],
+                "decision": text[:2000],
+                "status": "pending",
+            }
+            with open(ROOT / "decisions.jsonl", "a") as f:
+                f.write(json.dumps(entry) + "\n")
+            if tick_active() or decide_active():
+                return self._json(200, {"recorded": True, "mode": "queued", "id": entry["ts"]})
+            spawn_decider()
+            return self._json(200, {"recorded": True, "mode": "executing", "id": entry["ts"]})
+
+        if self.path == "/api/terminal":
+            # The decision executor's arm for terminal states. The engine's
+            # permission layer denies `gh pr merge/close` even to decide.sh
+            # (guardrail 1 stays mechanical), so an explicit merge/close typed
+            # by the maintainer is carried out HERE, under their auth — and
+            # only while a decision executor is actually running.
+            if not decide_active():
+                return self._json(403, {"error": "terminal actions are only served while the decision executor runs"})
+            action = req.get("action")
+            full = req.get("repo", "")
+            kind = req.get("kind", "pr")
+            num = str(req.get("number", ""))
+            if action not in ("merge", "close") or "/" not in full or not num.isdigit():
+                return self._json(400, {"error": "need action merge|close, repo owner/name, numeric number"})
+            if action == "merge":
+                if kind != "pr":
+                    return self._json(400, {"error": "only PRs can merge"})
+                ok, detail = merge_pr(full, num)
+            else:
+                sub = "pr" if kind == "pr" else "issue"
+                args = [sub, "close", num, "-R", full]
+                comment = (req.get("comment") or "").strip()
+                if comment:
+                    args += ["--comment", with_signature(comment)]
+                ok, detail = run_gh(args)
+            with open(ROOT / "approvals.jsonl", "a") as f:
+                f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                    "repo": full, "action": f"decision-{action}",
+                                    "item": f"{kind}-{num}", "ok": ok, "detail": detail[:300],
+                                    "reason": (req.get("reason") or "")[:300]}) + "\n")
+            return self._json(200 if ok else 502, {"ok": ok, "detail": detail})
 
         if self.path == "/api/mode":
             new_mode = req.get("mode")
@@ -499,9 +747,17 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(400, {"error": detail})
             return self._json(200, {"limits": detail})
 
+        if self.path == "/api/watch":
+            entries = req.get("repos") or [req]
+            for e in entries:
+                ok, err = set_watch(e.get("name", ""), e.get("watch"), e.get("priority"))
+                if not ok:
+                    return self._json(400, {"error": err})
+            return self._json(200, {"repos": repos_config(), "resources": list(RESOURCES)})
+
         if self.path == "/api/dismiss":
-            if tick_active():
-                return self._json(409, {"error": "tick running — try again when it finishes"})
+            if tick_active() or decide_active():
+                return self._json(409, {"error": "steward busy — try again when it finishes"})
             short = req.get("repo", "")
             ledger_path = ROOT / "state" / f"{short}.json"
             if not ledger_path.exists():
@@ -525,8 +781,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"outcomes": outcomes})
 
         if self.path == "/api/approve":
-            if tick_active():
-                return self._json(409, {"error": "tick running — try again when it finishes"})
+            if tick_active() or decide_active():
+                return self._json(409, {"error": "steward busy — try again when it finishes"})
             repos = repo_map()
             short = req.get("repo", "")
             full = repos.get(short)
@@ -550,11 +806,23 @@ class Handler(SimpleHTTPRequestHandler):
                     if ok:
                         action["executed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                     item_ok = item_ok and ok
+                # Approving an approve-recommend PR is the maintainer's final
+                # look: after the review is up (this click or a previous live
+                # post), merge on their behalf.
+                merged = False
+                if item_ok and item.get("type") == "pr" and any(
+                        a.get("kind") == "pr_review_approve"
+                        for a in item.get("staged_actions", [])):
+                    ok, detail = merge_pr(full, number)
+                    details.append(detail)
+                    merged = ok
+                    item_ok = item_ok and ok
                 if item_ok:
-                    item["status"] = "posted"
-                    item["last_action"] = "approved by maintainer via dashboard; posted"
+                    item["status"] = "done" if merged else "posted"
+                    item["last_action"] = ("approved & merged by maintainer via dashboard"
+                                           if merged else "approved by maintainer via dashboard; posted")
                     item["last_action_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-                outcomes[key] = {"ok": item_ok, "detail": "; ".join(details)}
+                outcomes[key] = {"ok": item_ok, "merged": merged, "detail": "; ".join(details)}
             ledger_path.write_text(json.dumps(ledger, indent=2))
             with open(ROOT / "approvals.jsonl", "a") as f:
                 f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

@@ -9,13 +9,18 @@ autonomy: full         # full = reviews, triage replies, labels, and bug-fix PRs
                        # (fix PRs pushed as steward branches, never merged)
 
 # Full owner/repo names. priority: high repos are worked first each tick.
+# watch: which resources the steward tracks — any of [issues, prs,
+# discussions]. Omit it to watch all three. Also editable from the
+# dashboard's 👁 Watch panel.
 repos:
   - name: your-github-user/your-hot-repo
     priority: high
+    watch: [issues, prs, discussions]
   - name: your-org/another-repo
     priority: medium
   - name: your-github-user/quiet-repo
     priority: low
+    watch: [issues, prs]
 
 limits:
   substantive_items_per_tick: 4   # deep PR reviews / repro attempts / fix PRs
