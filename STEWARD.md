@@ -299,18 +299,18 @@ Non-negotiable template invariants when regenerating:
   (server sends no charset header; without the meta tag text renders as mojibake).
 - Keep `<script id="steward-controls" src="/steward-controls.js"></script>` at
   the end of the file — it renders the "Run tick now" button, live site-status
-  chips, per-item "Approve & post" buttons, the ⚙ Settings and 📋 Audit
-  (decision log) panels, and the Repositories filter lens (click-to-focus,
-  decisions alert, filter bar) against server.py's /api endpoints and the
-  section structure above. The script is a tracked repo file;
+  chips, per-item "Approve & post" buttons, the ⚙ Settings panel, the 📋 Audit
+  page link, and the Repositories filter lens (click-to-focus, decisions
+  alert, filter bar) against server.py's /api endpoints and the section
+  structure above. The script is a tracked repo file;
   never inline or modify it during a tick.
 - Every staged `<details class="staged">` block MUST carry
   `data-repo="<short-repo>" data-items="<comma-separated ledger keys>"`
   (e.g. `data-repo="myrepo" data-items="pr-579,pr-594"`); the controls script
   derives the approve buttons from these attributes.
-- Keep the `metrics →` link chip in the header statusline. `metrics.html` is a
-  static tracked file that reads live data from `/api/metrics` — never
-  regenerate or edit it during a tick.
+- Keep the `metrics →` link chip in the header statusline. `metrics.html` and
+  `audit.html` (the decision-log page) are static tracked files that read live
+  data from the API — never regenerate or edit them during a tick.
 - In the "Ready for your final look" table, give each `<tr>` a
   `data-repo="<short-repo>" data-item="<ledger key>"` (e.g.
   `data-repo="llmfit" data-item="pr-646"`) and keep the PR/issue link in the

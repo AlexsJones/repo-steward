@@ -572,76 +572,16 @@
     });
   });
 
-  // 📋 Audit: the decision log (audit.jsonl via /api/audit) — every decision
-  // and action by you, the steward, or the system, filterable in place.
-  var auditBtn = navBtn('📋 Audit', 'The decision log — everything decided and done, by whom');
-  header.insertBefore(auditBtn, modeChip);
-  var apop = makePanel('600px');
-  var AUDIT_TONE = { maintainer: 'accent', steward: 'ok', system: 'neutral' };
-  var AUDIT_ICON = { approve: '✓', dismiss: '✗', decision_recorded: '💬', decision_executed: '⚡',
-                     terminal: '⏹', config_change: '⚙', tick_requested: '▶', tick_done: '⟳',
-                     decide_done: '⚡', steward_action: '🤖' };
-  var auditEvents = [];
-  function auditRow(e) {
-    var tone = AUDIT_TONE[e.actor] || 'neutral';
-    var chipTone = tone === 'neutral' ? 'background:var(--neutral-soft);color:var(--muted)'
-      : 'background:var(--' + tone + '-soft);color:var(--' + tone + ')';
-    var failed = e.ok === false;
-    var kind = (e.data && e.data.kind) ? ' · ' + e.data.kind : '';
-    return '<div title="' + esc(JSON.stringify(e)) + '" style="padding:8px 11px;margin-bottom:6px;border-radius:7px;' +
-      'background:var(--panel-2);border-left:3px solid var(--' + (failed ? 'crit' : tone === 'neutral' ? 'line' : tone) + ')">' +
-      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font:11px ui-monospace,Menlo,monospace;color:var(--muted)">' +
-      '<span>' + esc((e.ts || '').replace('T', ' ').replace('Z', '')) + '</span>' +
-      '<span style="font-weight:600;padding:1px 8px;border-radius:999px;' + chipTone + '">' + esc(e.actor || '?') + '</span>' +
-      '<span>' + (AUDIT_ICON[e.event] || '·') + ' ' + esc(e.event || '?') + esc(kind) + '</span>' +
-      (e.repo ? '<span style="font-weight:600;color:var(--ink)">' + esc(e.repo) + (e.ref ? ' ' + esc(e.ref) : '') + '</span>' : '') +
-      (failed ? '<span style="font-weight:600;color:var(--crit)">failed</span>' : '') +
-      '</div>' +
-      (e.summary ? '<div style="font-size:13px;line-height:1.5;margin-top:3px">' + esc(e.summary) + '</div>' : '') +
-      (e.detail && e.detail !== e.summary ? '<div style="font-size:11.5px;color:var(--muted);margin-top:2px;word-break:break-word">' + esc(e.detail) + '</div>' : '') +
-      '</div>';
-  }
-  function renderAudit() {
-    var fActor = apop.querySelector('#aud-actor').value;
-    var fEvent = apop.querySelector('#aud-event').value;
-    var fRepo = apop.querySelector('#aud-repo').value;
-    var evs = auditEvents.filter(function (e) {
-      return (!fActor || e.actor === fActor) && (!fEvent || e.event === fEvent) && (!fRepo || e.repo === fRepo);
-    }).slice().reverse();                     // newest first
-    apop.querySelector('#aud-count').textContent = evs.length + ' event' + (evs.length === 1 ? '' : 's');
-    apop.querySelector('#aud-list').innerHTML = evs.map(auditRow).join('') ||
-      '<div style="font-size:13px;color:var(--muted);padding:8px 2px">No events match. The log starts collecting from the moment the feature landed — run <code>make audit-backfill</code> to fold in older history.</div>';
-  }
-  function loadAudit() {
-    apop.innerHTML = '<div style="' + secHdr + '">Decision log — hover a row for the raw event</div>' +
-      '<div style="display:flex;gap:7px;align-items:center;margin-bottom:12px;flex-wrap:wrap">' +
-      ['aud-actor', 'aud-event', 'aud-repo'].map(function (id) {
-        return '<select id="' + id + '" style="font:600 12px ui-monospace,Menlo,monospace;padding:5px 7px;border-radius:6px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);cursor:pointer"></select>';
-      }).join('') +
-      '<span id="aud-count" style="margin-left:auto;font:11px ui-monospace,Menlo,monospace;color:var(--muted)"></span></div>' +
-      '<div id="aud-list" style="font-size:13px;color:var(--muted)">loading…</div>';
-    fetch('/api/audit?limit=500').then(function (r) { return r.json(); }).then(function (res) {
-      auditEvents = res.events || [];
-      function fill(id, label, values) {
-        var sel = apop.querySelector('#' + id);
-        sel.innerHTML = '<option value="">' + label + '</option>' +
-          values.map(function (v) { return '<option>' + esc(v) + '</option>'; }).join('');
-        sel.addEventListener('change', renderAudit);
-      }
-      function distinct(key) {
-        var seen = {};
-        return auditEvents.map(function (e) { return e[key]; })
-          .filter(function (v) { return v && !seen[v] && (seen[v] = 1); }).sort();
-      }
-      fill('aud-actor', 'all actors', distinct('actor'));
-      fill('aud-event', 'all events', distinct('event'));
-      fill('aud-repo', 'all repos', distinct('repo'));
-      renderAudit();
-    }).catch(function () {
-      apop.querySelector('#aud-list').textContent = 'could not load the decision log — is the API up?';
-    });
-  }
-  auditBtn.addEventListener('click', function () { togglePanel(apop, loadAudit); });
+  // 📋 Audit: the decision log has its own page (audit.html, like metrics),
+  // with filters and download — the header just links to it.
+  var auditLink = document.createElement('a');
+  auditLink.textContent = '📋 Audit';
+  auditLink.href = 'audit.html';
+  auditLink.title = 'The decision log — everything decided and done, by whom; downloadable';
+  auditLink.style.cssText = 'font:600 12px ui-monospace,Menlo,monospace;padding:8px 13px;border-radius:8px;' +
+    'border:1px solid var(--accent);background:transparent;color:var(--accent);text-decoration:none;' +
+    'align-self:center;flex-shrink:0;margin-left:10px;';
+  header.insertBefore(auditLink, modeChip);
 
   // The primary action: solid button, doubling as tick status indicator.
   var btn = document.createElement('button');
@@ -662,7 +602,7 @@
     metricsLink.style.cssText = 'font:600 12px ui-monospace,Menlo,monospace;padding:8px 13px;border-radius:8px;' +
       'border:1px solid var(--accent);background:transparent;color:var(--accent);text-decoration:none;' +
       'margin-left:auto;align-self:center;flex-shrink:0;';
-    header.insertBefore(metricsLink, auditBtn);
+    header.insertBefore(metricsLink, auditLink);
   }
 
   // Progress strip below the header: appears only while a tick runs.

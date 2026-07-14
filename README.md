@@ -152,9 +152,8 @@ STEWARD_ENGINE=custom STEWARD_ENGINE_CMD='my-agent --prompt "$PROMPT"' ./install
     `watch:` lists in `config.yaml`.
   Everything but the schedule applies from the next tick, so it's safe to
   change while one is running.
-- **📋 Audit** — the [decision log](#the-decision-log) in a panel: every
-  event, newest first, filterable by actor / event type / repo; hover a row
-  for the raw JSON.
+- **📋 Audit** — links to the [decision log](#the-decision-log) page
+  (`audit.html`, a sibling of the metrics page).
 
 Buttons appear only when the page is served by `server.py`; static copies of
 the dashboard are read-only.
@@ -193,7 +192,13 @@ observed outcomes). Steward events are written as structured lines to
 you see on the dashboard is rendered from the same serialisable events the
 log keeps forever.
 
-Schema and event catalogue live in `audit.py`. Read it with
+**http://localhost:8377/audit.html** is the log's page (📋 Audit on the
+dashboard): totals up top, then every event newest-first grouped by day,
+filterable by actor / event type / repo plus free-text search, failures
+flagged, raw JSON on hover. Two download buttons: the raw `audit.jsonl`
+(the append-only file itself) or the currently filtered view as CSV.
+
+Schema and event catalogue live in `audit.py`. Other ways to read it:
 `make audit` (last events, pretty), `GET /api/audit?repo=&event=&limit=`,
 or any jq one-liner — e.g. every terminal action ever taken:
 
@@ -297,6 +302,7 @@ running install generates is gitignored (per-maintainer state). The tracked set:
 | `tick.sh` | headless-agent wrapper each tick runs through; captures usage + chunk timings | yes |
 | `decide.sh` | the decision executor `server.py`/`tick.sh` spawn for typed decisions | yes |
 | `audit.py` | decision-log schema, append/read helpers, history backfill | yes |
+| `metrics.html` · `audit.html` | the metrics and decision-log pages — static, read live data from the API | yes |
 | `uptime_check.py` | token-free site probe the uptime timer runs | yes |
 | `install.sh` | generates the systemd user units | yes |
 | `Makefile` | convenience verbs over the units — `make help` | yes |
