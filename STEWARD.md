@@ -225,6 +225,11 @@ Append one line per repo to `metrics.jsonl`:
 
 ### 6. Refresh the dashboard
 Regenerate `dashboard.html` (same visual structure — edit data, keep design).
+On the very first tick there is no `dashboard.html` to carry the design forward
+(it is gitignored, so a fresh clone has none): take the palette, typography, and
+header/`.statusline` structure from `dashboard-first-run.html` — the tracked
+page server.py serves until this tick lands — and build the sections below on
+top of it.
 
 The **Repositories** section (a `<h2>Repositories</h2>` with a `.fleet` grid of
 `.card.repo` cards, each holding a `.name` with the short repo name and open

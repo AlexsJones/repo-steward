@@ -8,6 +8,10 @@
   function initRepoFilter() {
     var main = document.querySelector('main');
     if (!main) return;
+    // The first-run page (server.py's dashboard-first-run.html, served until a
+    // tick generates dashboard.html) lists the fleet with nothing to filter —
+    // clickable cards there would dim each other and do nothing else.
+    if (main.hasAttribute('data-first-run')) return;
     function heading(re) {
       return Array.prototype.slice.call(main.querySelectorAll('section'))
         .filter(function (s) { var h = s.querySelector('h2'); return h && re.test(h.textContent); })[0];

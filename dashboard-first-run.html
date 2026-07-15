@@ -1,0 +1,154 @@
+<meta charset="utf-8">
+<title>Repo Steward</title>
+<link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #EFF2F0; --panel: #FBFCFB; --panel-2: #F3F6F4;
+    --ink: #1C2321; --muted: #5C6B66; --line: #D8DFDB;
+    --accent: #175E54; --accent-soft: #E3EEEB;
+    --ok: #0B7D5E; --ok-soft: #DFF0E9;
+    --warn: #A66A1E; --warn-soft: #F5ECDC;
+    --crit: #A32F26; --crit-soft: #F6E3E1;
+    --neutral-soft: #E7EBE9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111614; --panel: #181F1C; --panel-2: #1D2622;
+      --ink: #E4EAE7; --muted: #8CA097; --line: #2A342F;
+      --accent: #4FB39F; --accent-soft: #1B322D;
+      --ok: #149B77; --ok-soft: #14302A;
+      --warn: #D19A4A; --warn-soft: #33281A;
+      --crit: #E0736A; --crit-soft: #37211F;
+      --neutral-soft: #232C28;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #EFF2F0; --panel: #FBFCFB; --panel-2: #F3F6F4;
+    --ink: #1C2321; --muted: #5C6B66; --line: #D8DFDB;
+    --accent: #175E54; --accent-soft: #E3EEEB;
+    --ok: #0B7D5E; --ok-soft: #DFF0E9;
+    --warn: #A66A1E; --warn-soft: #F5ECDC;
+    --crit: #A32F26; --crit-soft: #F6E3E1;
+    --neutral-soft: #E7EBE9;
+  }
+  :root[data-theme="dark"] {
+    --bg: #111614; --panel: #181F1C; --panel-2: #1D2622;
+    --ink: #E4EAE7; --muted: #8CA097; --line: #2A342F;
+    --accent: #4FB39F; --accent-soft: #1B322D;
+    --ok: #149B77; --ok-soft: #14302A;
+    --warn: #D19A4A; --warn-soft: #33281A;
+    --crit: #E0736A; --crit-soft: #37211F;
+    --neutral-soft: #232C28;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; padding: 0 20px 64px; }
+  main { max-width: 1100px; margin: 0 auto; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px 8px; padding: 28px 0 18px; border-bottom: 2px solid var(--accent); margin-bottom: 28px; }
+  h1 { font-family: "Iowan Old Style", Palatino, "Palatino Linotype", Georgia, serif; font-size: 28px; font-weight: 600; margin: 0; }
+  .statusline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 12px; color: var(--muted); }
+  .statusline a { color: var(--accent); font: 600 12px ui-monospace, Menlo, monospace; text-decoration: none; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; background: var(--neutral-soft); color: var(--muted); border-radius: 999px; padding: 3px 10px; font: 600 11.5px ui-monospace, Menlo, monospace; }
+  section { margin-bottom: 36px; }
+  h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin: 0 0 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; }
+  .lead { border-left: 3px solid var(--accent); }
+  .lead h3 { font: 600 18px/1.4 system-ui, -apple-system, sans-serif; margin: 0 0 8px; }
+  .lead p { margin: 0 0 14px; color: var(--muted); max-width: 68ch; }
+  .lead p:last-child { margin-bottom: 0; }
+  .cta { font: 600 14px system-ui, -apple-system, sans-serif; padding: 10px 20px; border-radius: 8px; border: none; background: var(--accent); color: var(--panel); cursor: pointer; box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
+  .cta[disabled] { background: var(--warn-soft); color: var(--warn); cursor: default; box-shadow: none; }
+  .cta-note { font-size: 12.5px; color: var(--muted); margin: 10px 0 0; }
+  .fleet { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+  .card.repo .name { display: block; font: 600 14px ui-monospace, "SF Mono", Menlo, monospace; }
+  .card.repo .quiet { display: block; font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .prio { font: 600 10.5px ui-monospace, Menlo, monospace; padding: 1px 7px; border-radius: 999px; background: var(--neutral-soft); color: var(--muted); }
+  .prio.high { background: var(--accent-soft); color: var(--accent); }
+  ol.plan { margin: 0; padding-left: 20px; color: var(--muted); display: flex; flex-direction: column; gap: 9px; }
+  ol.plan b { color: var(--ink); }
+  .fine { font-size: 12.5px; color: var(--muted); margin: 12px 0 0; }
+  code { font-family: ui-monospace, "SF Mono", Menlo, monospace; background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 12.5px; }
+</style>
+
+<main data-first-run>
+  <header>
+    <h1>Repo Steward</h1>
+    <div class="statusline">
+      <span class="chip">no tick yet</span>
+      <a href="/metrics.html">metrics →</a>
+    </div>
+  </header>
+
+  <section>
+    <h2>First run</h2>
+    <div class="card lead">
+      <h3>The steward hasn't read your repositories yet.</h3>
+      <p>Everything below is real and configured — the queue, the staged
+      replies, and the trends fill in once a tick has actually looked at
+      GitHub. The first one takes a few minutes on a large backlog.</p>
+      <button class="cta" id="first-tick">▶ Run the first tick</button>
+      <p class="cta-note" id="cta-note">Progress appears above; the page swaps
+      itself for the real dashboard the moment the tick finishes.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Repositories</h2>
+    <div class="fleet"><!--REPOS--></div>
+  </section>
+
+  <section>
+    <h2>What the first tick does</h2>
+    <div class="card">
+      <ol class="plan">
+        <li><b>Reads each repository</b> above — open issues, PRs, and
+        discussions you've asked it to watch — into a per-repo ledger.</li>
+        <li><b>Works the queue</b>: triage replies, PR reviews, delta
+        re-reviews, and fix PRs, in priority order and within this tick's
+        size limits.</li>
+        <li><b>Stages everything for you</b> under <b>Ready for your final
+        look</b> (its merge shortlist) and <b>Staged replies</b> (everything
+        else it drafted).</li>
+        <li><b>Escalates the ties</b> it shouldn't call alone — design
+        direction, breaking changes, close/reject — under <b>Decisions
+        needed</b>.</li>
+        <li><b>Shows you the plan and the record</b>: what it intends to do
+        next tick, what it did last tick, and per-repo trends.</li>
+      </ol>
+      <p class="fine">In <b>draft</b> mode the steward posts nothing — every
+      outbound message waits for your click. Use the mode toggle and
+      <b>⚙ Settings</b> above to change mode, schedule, tick size, and what
+      each repository is watched for. Repositories come from
+      <code>config.yaml</code>.</p>
+    </div>
+  </section>
+</main>
+
+<script id="steward-controls" src="/steward-controls.js"></script>
+<script>
+  // First-run only: kick off a tick from the page body (the header's
+  // "Run tick now" button, injected by steward-controls.js, does the same),
+  // and swap to the real dashboard as soon as a tick has generated one.
+  (function () {
+    var btn = document.getElementById('first-tick');
+    var note = document.getElementById('cta-note');
+    function busy(msg) { btn.disabled = true; btn.textContent = '⟳ Tick running…'; if (msg) note.textContent = msg; }
+    btn.addEventListener('click', function () {
+      busy();
+      fetch('/api/tick', { method: 'POST', body: '{}' })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (res.error) { btn.disabled = false; btn.textContent = '▶ Run the first tick'; note.textContent = '⚠ ' + res.error; }
+        })
+        .catch(function () {
+          btn.disabled = false; btn.textContent = '▶ Run the first tick';
+          note.textContent = '⚠ could not reach the steward API — is server.py running?';
+        });
+    });
+    setInterval(function () {
+      fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
+        if (s.dashboard_ready) { location.reload(); return; }
+        if (s.tick_active) busy('Watch the progress strip above — this page swaps itself for the dashboard when the tick lands.');
+      }).catch(function () {});
+    }, 5000);
+  })();
+</script>
