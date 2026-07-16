@@ -468,7 +468,19 @@ def set_schedule(preset):
 
 
 def run_gh(args):
-    p = subprocess.run(["gh"] + args, capture_output=True, text=True, timeout=60)
+    # subprocess raises rather than returning 127 when gh isn't on PATH, and this
+    # server runs under a systemd unit whose PATH is not the maintainer's shell —
+    # so "works in my terminal" says nothing about what this process can resolve.
+    # Report it as a failed action instead of letting the exception kill the
+    # request with no body for the dashboard to show.
+    try:
+        p = subprocess.run(["gh"] + args, capture_output=True, text=True, timeout=60)
+    except FileNotFoundError:
+        return False, ("gh not found on this process's PATH "
+                       f"(PATH={os.environ.get('PATH', '')!r}) — the dashboard unit "
+                       "needs Environment=PATH and an EnvironmentFile with the token")
+    except subprocess.TimeoutExpired:
+        return False, "gh timed out after 60s"
     return p.returncode == 0, (p.stdout + p.stderr).strip()
 
 
@@ -866,7 +878,13 @@ class Handler(SimpleHTTPRequestHandler):
                 for action in item.get("staged_actions", []):
                     if action.get("executed_at"):
                         continue
-                    ok, detail = execute_action(full, number, item["type"], action)
+                    try:
+                        ok, detail = execute_action(full, number, item["type"], action)
+                    except Exception as e:
+                        # Never let one action's exception take down the whole
+                        # request: the dashboard renders a bare failure with no
+                        # cause, which is indistinguishable from a rejected post.
+                        ok, detail = False, f"{type(e).__name__}: {e}"
                     details.append(detail)
                     if ok:
                         action["executed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

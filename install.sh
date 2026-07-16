@@ -112,7 +112,12 @@ After=network.target
 
 [Service]
 Environment=STEWARD_PORT=$PORT
-ExecStart=$(command -v python3) $STEWARD_HOME/server.py
+# server.py shells out to gh for every maintainer-approved post, so it needs the
+# same PATH and credential as the tick — without them subprocess raises
+# FileNotFoundError and the dashboard button fails with no cause shown.
+Environment=PATH=$STEWARD_PATH
+${ENV_FILE:+EnvironmentFile=$ENV_FILE}
+ExecStart=$PYTHON_BIN $STEWARD_HOME/server.py
 Restart=on-failure
 
 [Install]
@@ -174,7 +179,10 @@ else
   exit 1
 fi
 
-systemctl --user enable --now repo-steward-dash.service
+systemctl --user enable repo-steward-dash.service
+# restart, not `enable --now`: on a re-install the dashboard is already running
+# and would keep serving with the previous unit's environment.
+systemctl --user restart repo-steward-dash.service
 # Only run the uptime probe if the user configured sites.
 if grep -qE "^sites:" "$STEWARD_HOME/config.yaml" 2>/dev/null; then
   systemctl --user enable --now repo-steward-uptime.timer

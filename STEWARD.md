@@ -171,6 +171,17 @@ transitions to `incidents.jsonl`. Read entries newer than the last tick:
 Site checks themselves cost no tokens; only investigate on transitions.
 
 ### 2. Prioritize the work queue
+
+**Scope gate — apply before ordering, and it outranks every rule below.** Drop
+any item whose *last activity* is older than `limits.activity_floor_days` in
+config.yaml. Measure on last activity, never creation date: a 2023 issue with a
+comment this week is in scope; a thread nobody has touched since 2023 is not.
+Items labelled `steward-keep` are exempt and always in scope. `0` disables the
+floor. Rule 4 below never reaches past this gate — no exceptions, however empty
+the queue looks. Report the number of items the gate dropped, per repo, in the
+dashboard activity section: a floor that hides the backlog it skipped is
+indistinguishable from a steward that has run out of work.
+
 Order candidate work (highest first):
 1. PRs where a contributor pushed changes after our review — **delta re-review**
    (cheap, keeps iterations moving; count against light limit).
@@ -178,9 +189,9 @@ Order candidate work (highest first):
    response latency is the metric that matters most for OSS health.
 3. Confirmed bugs on high-priority repos with no fix in flight → author a fix
    PR (branch `steward/<issue-number>-<slug>`, tests included, "Closes #N").
-4. Backlog drain: oldest un-triaged items.
-5. Stale items (no movement > 21 days): draft a nudge, or propose close as an
-   escalation (closing is the maintainer's call).
+4. Backlog drain: oldest un-triaged items — within the scope gate only.
+5. Stale items (no movement > 21 days, but inside the floor): draft a nudge, or
+   propose close as an escalation (closing is the maintainer's call).
 
 ### 3. Execute (within limits)
 - **Issue triage**: classify bug / feature / question / dupe. Apply labels.

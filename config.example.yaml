@@ -26,6 +26,11 @@ limits:
   substantive_items_per_tick: 4   # deep PR reviews / repro attempts / fix PRs
   light_items_per_tick: 12        # labels, triage classification, delta re-reviews
   max_fix_prs_open: 3             # steward-authored fix PRs in flight at once
+  # Ignore anything with no activity in this many days. Measured on last
+  # activity, not creation: an old issue with a recent comment stays in scope;
+  # untouched archaeology is dropped. Label `steward-keep` to exempt an item.
+  # 0 = no floor (the steward will reach for years-old items indefinitely).
+  activity_floor_days: 90
 
 # Optional: sites probed every few minutes by uptime_check.py (no tokens).
 # repo links the site to where the steward investigates when it goes down.
