@@ -2,7 +2,9 @@
 # Repo Steward installer — systemd user units for the tick timer and dashboard.
 #
 #   ./install.sh                 install + enable dashboard and hourly timer
+#                                (a timer you previously disabled stays disabled)
 #   ./install.sh --no-timer      install everything but leave the timer off
+#   ./install.sh --timer         re-arm a timer you had deliberately disabled
 #
 # Env overrides:
 #   STEWARD_ENGINE     agent CLI running the tick: claude (default) | codex |
@@ -19,7 +21,23 @@ UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 PORT="${STEWARD_PORT:-8377}"
 CADENCE="${STEWARD_CADENCE:-*-*-* *:17:00}"
 ENABLE_TIMER=true
-[[ "${1:-}" == "--no-timer" ]] && ENABLE_TIMER=false
+FORCE_TIMER=false
+case "${1:-}" in
+  --no-timer) ENABLE_TIMER=false ;;
+  --timer)    FORCE_TIMER=true ;;
+esac
+
+# Read the timer's enablement BEFORE the unit is rewritten below. A maintainer
+# who turned ticks off must not have them turned back on by a re-install run for
+# an unrelated fix — and the timer sets Persistent=true, so `enable --now` does
+# not merely schedule the next tick, it fires the missed ones immediately. The
+# unit file must already exist for this to mean "deliberately disabled" rather
+# than "not installed yet".
+TIMER_WAS_DISABLED=false
+if [[ -f "$UNIT_DIR/repo-steward.timer" ]] &&
+   ! systemctl --user is-enabled repo-steward.timer >/dev/null 2>&1; then
+  TIMER_WAS_DISABLED=true
+fi
 
 ENGINE="${STEWARD_ENGINE:-claude}"
 if [[ "$ENGINE" == "custom" ]]; then
@@ -188,11 +206,17 @@ if grep -qE "^sites:" "$STEWARD_HOME/config.yaml" 2>/dev/null; then
   systemctl --user enable --now repo-steward-uptime.timer
   echo ">> uptime probe enabled (every 5 min)"
 fi
+if $ENABLE_TIMER && $TIMER_WAS_DISABLED && ! $FORCE_TIMER; then
+  ENABLE_TIMER=false
+  echo ">> timer left DISABLED — it was off before this run and that choice is kept."
+  echo "   Re-arm deliberately with: ./install.sh --timer"
+fi
+
 if $ENABLE_TIMER; then
   systemctl --user enable --now repo-steward.timer
   echo ">> timer enabled: $CADENCE (±5 min jitter)"
 else
-  echo ">> timer NOT enabled; start ticks manually: systemctl --user start repo-steward.service"
+  echo ">> ticks are manual: systemctl --user start repo-steward.service"
 fi
 
 echo ">> dashboard: http://localhost:$PORT/"
