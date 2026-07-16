@@ -29,10 +29,43 @@ else
   ENGINE_BIN="$(command -v "$ENGINE" || true)"
   [[ -n "$ENGINE_BIN" ]] || { echo "error: '$ENGINE' CLI not found in PATH"; exit 1; }
 fi
-command -v gh >/dev/null || { echo "error: gh CLI not found"; exit 1; }
+GH_BIN="$(command -v gh || true)"
+[[ -n "$GH_BIN" ]] || { echo "error: gh CLI not found"; exit 1; }
 gh auth status >/dev/null 2>&1 || { echo "error: gh is not authenticated (run: gh auth login)"; exit 1; }
-command -v python3 >/dev/null || { echo "error: python3 not found"; exit 1; }
-command -v jq >/dev/null || { echo "error: jq not found"; exit 1; }
+PYTHON_BIN="$(command -v python3 || true)"
+[[ -n "$PYTHON_BIN" ]] || { echo "error: python3 not found"; exit 1; }
+JQ_BIN="$(command -v jq || true)"
+[[ -n "$JQ_BIN" ]] || { echo "error: jq not found"; exit 1; }
+
+# The systemd user manager starts with a minimal PATH (typically
+# /usr/local/bin:/usr/bin) and sources no shell rc, so a tool found here may be
+# invisible to the tick — `command -v` in this shell proves nothing about what
+# the service resolves. tick.sh/decide.sh call `gh` and `jq` by bare name, so
+# carry the directories of the tools we actually resolved into the unit's PATH.
+STEWARD_PATH=""
+for _d in "$ENGINE_BIN" "$GH_BIN" "$JQ_BIN" "$PYTHON_BIN" /usr/local/bin /usr/bin; do
+  [[ -n "$_d" ]] || continue
+  [[ -d "$_d" ]] || _d="$(dirname "$_d")"
+  case ":$STEWARD_PATH:" in *":$_d:"*) ;; *) STEWARD_PATH="${STEWARD_PATH:+$STEWARD_PATH:}$_d" ;; esac
+done
+
+# Same trap for auth: a token exported from an interactive rc file does not
+# reach the service. Persist it to a 0600 EnvironmentFile rather than an inline
+# Environment= line, which `systemctl show` exposes to any local user.
+ENV_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/repo-steward/env"
+_tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+if [[ -n "$_tok" ]]; then
+  mkdir -p "$(dirname "$ENV_FILE")"
+  ( umask 077; printf 'GITHUB_TOKEN=%s\n' "$_tok" > "$ENV_FILE" )
+  chmod 600 "$ENV_FILE"
+  echo ">> wrote $ENV_FILE (0600) — the tick's gh credential"
+elif [[ ! -f "${GH_CONFIG_DIR:-$HOME/.config/gh}/hosts.yml" ]]; then
+  echo "error: gh is authenticated here, but via neither GH_TOKEN/GITHUB_TOKEN nor"
+  echo "       a hosts.yml the service can read. The tick would start unauthenticated."
+  exit 1
+else
+  ENV_FILE=""   # hosts.yml under $HOME — systemd sets HOME, so gh finds it.
+fi
 
 mkdir -p "$STEWARD_HOME"/{state,logs} "$UNIT_DIR"
 [[ -f "$STEWARD_HOME/config.yaml" ]] || {
@@ -49,9 +82,11 @@ After=network-online.target
 Type=oneshot
 WorkingDirectory=$STEWARD_HOME
 Environment=STEWARD_ENGINE=$ENGINE
+Environment=PATH=$STEWARD_PATH
 ${ENGINE_BIN:+Environment=STEWARD_ENGINE_BIN=$ENGINE_BIN}
 ${STEWARD_ENGINE_CMD:+Environment=STEWARD_ENGINE_CMD=$STEWARD_ENGINE_CMD}
 ${STEWARD_MODEL:+Environment=STEWARD_MODEL=$STEWARD_MODEL}
+${ENV_FILE:+EnvironmentFile=$ENV_FILE}
 ExecStart=$STEWARD_HOME/tick.sh
 TimeoutStartSec=5400
 StandardError=append:$STEWARD_HOME/logs/tick.log
@@ -122,6 +157,23 @@ WantedBy=timers.target
 EOF
 
 systemctl --user daemon-reload
+
+# Prove gh works where the tick will actually run it. The preflight above only
+# tested this shell; a timer enabled on the strength of that can fail every
+# firing with `gh: 127` while `gh --version` keeps working when you check by
+# hand. Verify in a transient unit under the same manager, or refuse to arm.
+if systemd-run --user --wait --collect --quiet \
+     --property="Environment=PATH=$STEWARD_PATH" \
+     ${ENV_FILE:+--property="EnvironmentFile=$ENV_FILE"} \
+     /bin/bash -c 'command -v gh >/dev/null && gh auth status >/dev/null 2>&1'; then
+  echo ">> verified: gh resolves and authenticates under systemd --user"
+else
+  echo "error: gh works in this shell but NOT under the systemd user manager."
+  echo "       The tick would fail every firing. PATH given to the unit:"
+  echo "       $STEWARD_PATH"
+  exit 1
+fi
+
 systemctl --user enable --now repo-steward-dash.service
 # Only run the uptime probe if the user configured sites.
 if grep -qE "^sites:" "$STEWARD_HOME/config.yaml" 2>/dev/null; then
