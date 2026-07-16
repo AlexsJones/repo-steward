@@ -216,8 +216,10 @@ if $ENABLE_TIMER; then
   systemctl --user enable --now repo-steward.timer
   echo ">> timer enabled: $CADENCE (±5 min jitter)"
 else
-  echo ">> ticks are manual: systemctl --user start repo-steward.service"
+  echo ">> ticks are manual: systemctl --user start --no-block repo-steward.service"
 fi
 
 echo ">> dashboard: http://localhost:$PORT/"
-echo ">> first tick: systemctl --user start repo-steward.service   (watch logs/tick.log)"
+# --no-block or systemctl waits out the whole tick: the unit is Type=oneshot, so
+# "started" means "finished" and a plain start looks like a hung terminal.
+echo ">> first tick: systemctl --user start --no-block repo-steward.service   (watch logs/tick.log)"

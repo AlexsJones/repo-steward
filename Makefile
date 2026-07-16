@@ -31,7 +31,9 @@ restart: ## Restart the dashboard service
 	$(SC) restart $(DASH)
 
 tick: ## Run one steward tick now (reads ledgers, regenerates dashboard.html)
-	@$(SC) start $(SVC) && echo "tick started — follow it with: make logs"
+	@# --no-block: the unit is Type=oneshot, so a plain `start` blocks until the
+	@# whole tick finishes (minutes) and only then prints "tick started".
+	@$(SC) start --no-block $(SVC) && echo "tick started — follow it with: make logs"
 
 timer-on: ## Enable scheduled ticks
 	$(SC) enable --now $(TIMER)
