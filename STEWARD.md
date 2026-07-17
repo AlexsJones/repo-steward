@@ -262,9 +262,20 @@ exactly one of them:
   with the steward's rationale. This is the recommend-to-merge shortlist; the
   row's ⌄ expander shows the full staged review, so these are NOT repeated in
   Staged replies below. Every row must carry its posture and age, both from
-  GitHub facts: `✓ approved on GitHub <date> — awaiting your merge` when our
-  approval is already posted at the PR's current head (live mode), or `review
-  staged — approve to post` when it still needs the maintainer's click. Date
+  GitHub facts: `✓ approved by this steward on <date> — awaiting your merge`
+  when our approval is already posted at the PR's current head (live mode), or
+  `review staged — approve to post` when it still needs the maintainer's click.
+  **Name the approver, always.** An approval posted by the steward is the
+  steward's own opinion restated, never corroboration — it is the same judgement
+  that produced the row, and phrasing it as `approved on GitHub` launders it into
+  what reads like an independent human sign-off. Before describing any PR as
+  reviewed or validated by someone else, check the approval's author and body:
+  an approval carrying the steward signature (or posted by the maintainer's
+  account at a time no human was at the keyboard) counts as zero independent
+  review, and any tally of "who else has looked at this" must exclude it.
+  This applies to approvals left by *previous* steward installs too — they are
+  indistinguishable from the maintainer's own by account alone, so go by the
+  signature in the body, not the login. Date
   the row from when it FIRST reached approve-recommend, not this tick — a row
   that has waited five days must read as five days old. Sort oldest-first so
   long-waiting rows surface, and never re-describe an unchanged carried-over
