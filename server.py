@@ -891,11 +891,17 @@ class Handler(SimpleHTTPRequestHandler):
                     item_ok = item_ok and ok
                 # Approving an approve-recommend PR is the maintainer's final
                 # look: after the review is up (this click or a previous live
-                # post), merge on their behalf.
+                # post), merge on their behalf. Key off the verdict, not off a
+                # staged approve action: a PR already approved on GitHub has no
+                # review left to post and so carries zero staged actions — the
+                # "awaiting your merge" posture, which must still merge.
                 merged = False
-                if item_ok and item.get("type") == "pr" and any(
-                        a.get("kind") == "pr_review_approve"
-                        for a in item.get("staged_actions", [])):
+                if item_ok and item.get("type") == "pr" and (
+                        item.get("verdict") == "approve-recommend"
+                        or any(a.get("kind") == "pr_review_approve"
+                               for a in item.get("staged_actions", []))):
+                    if not details:
+                        details.append("no staged actions; merging on verdict")
                     ok, detail = merge_pr(full, number)
                     details.append(detail)
                     merged = ok
