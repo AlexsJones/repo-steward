@@ -291,6 +291,24 @@ def merge_pr(full_repo, number):
     ok, out = run_gh(["pr", "merge", str(number), "-R", full_repo, flag])
     if ok:
         return True, f"merge {flag}: {(out or 'merged')[:200]}"
+    if "merge commit cannot be cleanly created" in out or "not mergeable" in out:
+        # The head conflicts with base (mergeStateStatus DIRTY). gh's stderr
+        # suggests --auto, but auto-merge only waits out unmet requirements —
+        # it never resolves conflicts — so don't parrot that advice. Dependabot
+        # branches are fixable from here: a `@dependabot rebase` comment makes
+        # the bot recreate the branch on top of base.
+        head_ok, head = run_gh(["pr", "view", str(number), "-R", full_repo,
+                                "--json", "headRefName", "--jq", ".headRefName"])
+        if head_ok and head.startswith("dependabot/"):
+            c_ok, _ = run_gh(["pr", "comment", str(number), "-R", full_repo,
+                              "--body", "@dependabot rebase"])
+            if c_ok:
+                return False, (f"merge {flag}: PR conflicts with its base branch — "
+                               "asked dependabot to rebase it; approve again once "
+                               "the branch is refreshed")
+        return False, (f"merge {flag}: PR conflicts with its base branch — the "
+                       "author must rebase or resolve conflicts before it can "
+                       "merge (the approval review itself is posted)")
     retriable = ("not up to date with the base branch" in out
                  or ("Required status check" in out and "is expected" in out))
     if not retriable:
