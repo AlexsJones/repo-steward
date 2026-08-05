@@ -18,4 +18,5 @@ activity.jsonl
 dashboard.html
 .claude/settings.local.json
 __pycache__/
+VOICE.md
 tmp/

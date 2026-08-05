@@ -308,6 +308,7 @@ running install generates is gitignored (per-maintainer state). The tracked set:
 | `Makefile` | convenience verbs over the units — `make help` | yes |
 | `.claude/settings.json` | the merge / close / force-push permission deny layer | yes |
 | `config.example.yaml` | starter config — copy to `config.yaml` | yes |
+| `VOICE.example.md` | optional writing-style template — copy to `VOICE.md` | yes |
 
 Generated per install, never committed:
 
