@@ -501,12 +501,37 @@
       .catch(function () { alert('schedule change failed — is the API up?'); });
   });
 
+  // Sign-off toggle: applies immediately, like the schedule (the server
+  // appends/strips the signature at post time, so pending items follow it).
+  var sigWrap = document.createElement('label');
+  sigWrap.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;';
+  var sigChk = document.createElement('input');
+  sigChk.type = 'checkbox';
+  sigChk.style.cssText = 'accent-color:var(--accent);width:15px;height:15px;cursor:pointer;';
+  sigWrap.appendChild(sigChk);
+  sigWrap.appendChild(document.createTextNode('Append the steward sign-off to posted comments'));
+  function paintSig(on) { sigChk.checked = on !== false; }
+  paintSig(initial.signature_enabled);
+  sigChk.addEventListener('change', function () {
+    fetch('/api/signature', { method: 'POST', body: JSON.stringify({ enabled: sigChk.checked }) })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res.error) { alert(res.error); sigChk.checked = !sigChk.checked; return; }
+        toast(res.signature_enabled
+          ? 'Sign-off on — posts end with the config signature.'
+          : 'Sign-off off — posts go out without the signature.', 'ok');
+      })
+      .catch(function () { alert('signature change failed — is the API up?'); sigChk.checked = !sigChk.checked; });
+  });
+
   var lbl = 'display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:9px;';
   var numIn = 'width:64px;font:600 13px ui-monospace,Menlo,monospace;padding:5px 7px;border-radius:6px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink);';
   var hint = 'font-size:11px;color:var(--muted);margin:-4px 0 10px;';
   spop.innerHTML =
     '<div style="' + secHdr + '">Schedule — when ticks run</div>' +
     '<div data-sec="sched" style="margin-bottom:18px"></div>' +
+    '<div style="' + secHdr + '">Sign-off — the signature on posted comments</div>' +
+    '<div data-sec="sig" style="margin-bottom:18px"></div>' +
     '<div style="' + secHdr + '">Tick size — items worked per run</div>' +
     '<label style="' + lbl + '">Substantive <input id="lim-sub" type="number" min="1" max="100" style="' + numIn + '"></label>' +
     '<div style="' + hint + '">deep PR reviews, repro attempts, fix PRs</div>' +
@@ -516,6 +541,7 @@
     '<div data-sec="watch" style="margin-bottom:14px;font-size:12px;color:var(--muted)">loading…</div>' +
     '<button id="set-save" style="width:100%;font:600 13px system-ui,sans-serif;padding:8px;border-radius:7px;border:none;background:var(--accent);color:var(--panel);cursor:pointer">Save — applies next tick</button>';
   spop.querySelector('[data-sec=sched]').appendChild(sched);
+  spop.querySelector('[data-sec=sig]').appendChild(sigWrap);
   var limSub = spop.querySelector('#lim-sub'), limLight = spop.querySelector('#lim-light');
   function paintLimits(l) { if (l) { limSub.value = l.substantive; limLight.value = l.light; } }
   paintLimits(initial.limits);
@@ -571,7 +597,7 @@
       fetch('/api/watch').then(function (r) { return r.json(); }).then(renderWatch)
         .catch(function () { spop.querySelector('[data-sec=watch]').textContent = 'watch config unavailable — is the API up?'; });
       fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
-        paintSched(s.schedule); paintLimits(s.limits);
+        paintSched(s.schedule); paintLimits(s.limits); paintSig(s.signature_enabled);
       }).catch(function () {});
     });
   });

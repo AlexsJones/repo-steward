@@ -44,4 +44,7 @@ dashboard:
 
 # Appended to every comment/review the steward posts in live mode, so
 # contributors know it's a bot and maintainers can audit its output.
+# Set signature_enabled: false to post without it (toggleable from the
+# dashboard ⚙ Settings panel; absent = true).
+signature_enabled: true
 signature: "🤝 _Handled by the maintainer's [Repo Steward](https://github.com/AlexsJones/repo-steward) — replies reviewed by [@your-github-user](https://github.com/your-github-user)._\n\nLearn more or run your own: https://github.com/AlexsJones/repo-steward"

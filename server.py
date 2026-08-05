@@ -10,6 +10,7 @@ Static file serving plus a minimal control API:
   POST /api/mode              -> {"mode": "draft"|"live"}  (rewrites config.yaml)
   POST /api/schedule          -> {"preset": "manual"|"hourly"|"6h"|"daily"|"weekly"}
   POST /api/limits            -> {"substantive": N, "light": N}  (per-tick work caps)
+  POST /api/signature         -> {"enabled": bool}  (toggle the comment sign-off)
   GET  /api/watch             -> per-repo watched resources + priority
   POST /api/watch             -> {"repos": [{"name", "watch": [...], "priority"}]}
         rewrites the config.yaml repos block in place (comments survive)
@@ -174,12 +175,24 @@ def steward_signature():
     return m.group(1).replace("\\n", "\n")
 
 
+def signature_enabled():
+    m = re.search(r"^signature_enabled:\s*(\w+)", (ROOT / "config.yaml").read_text(), re.M)
+    return m.group(1).lower() != "false" if m else True
+
+
 def with_signature(body):
     """Ensure the posted body ends with the CURRENT config signature, so a
     change to the signature (or the project URL) takes effect immediately for
-    every pending item, regardless of when it was staged."""
+    every pending item, regardless of when it was staged. With
+    signature_enabled: false the same rule runs in reverse: any signature
+    baked into an older staged draft is stripped before posting."""
+    if not body:
+        return body
+    if not signature_enabled():
+        marker = body.find("🤝")
+        return body[:marker].rstrip() if marker != -1 else body
     sig = steward_signature()
-    if not sig or not body or sig in body:
+    if not sig or sig in body:
         return body
     marker = body.find("🤝")           # strip any older baked-in signature
     if marker != -1:
@@ -594,6 +607,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "progress": tick_progress() if active else None,
                 "schedule": current_schedule(),
                 "limits": read_limits(),
+                "signature_enabled": signature_enabled(),
                 # The first-run page polls this to swap itself for the real
                 # dashboard as soon as a tick has written one.
                 "dashboard_ready": (ROOT / "dashboard.html").exists(),
@@ -813,6 +827,24 @@ class Handler(SimpleHTTPRequestHandler):
                          summary=f"mode → {new_mode}",
                          data={"setting": "mode", "mode": new_mode})
             return self._json(200, {"mode": new_mode})
+
+        if self.path == "/api/signature":
+            enabled = req.get("enabled")
+            if not isinstance(enabled, bool):
+                return self._json(400, {"error": "enabled must be true or false"})
+            cfg_path = ROOT / "config.yaml"
+            cfg = cfg_path.read_text()
+            line = f"signature_enabled: {str(enabled).lower()}"
+            cfg, n = re.subn(r"^signature_enabled:.*$", line, cfg, count=1, flags=re.M)
+            if not n:
+                cfg, n = re.subn(r"^(signature:)", line + "\n\\1", cfg, count=1, flags=re.M)
+            if not n:
+                cfg = cfg.rstrip("\n") + "\n" + line + "\n"
+            cfg_path.write_text(cfg)
+            audit.append("config_change", "maintainer", "dashboard",
+                         summary=f"signature → {'on' if enabled else 'off'}",
+                         data={"setting": "signature_enabled", "enabled": enabled})
+            return self._json(200, {"signature_enabled": enabled})
 
         if self.path == "/api/schedule":
             ok, detail = set_schedule(req.get("preset", ""))
