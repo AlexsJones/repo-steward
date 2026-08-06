@@ -73,8 +73,9 @@ def append(event, actor, via, repo="", ref="", summary="", ok=None,
     return e
 
 
-def read_events(limit=200, repo=None, event=None):
-    """The last `limit` events, oldest first, optionally filtered."""
+def read_events(limit=200, repo=None, event=None, since=None, until=None):
+    """The last `limit` events, oldest first, optionally filtered.
+    `since` / `until` are YYYY-MM-DD date strings (inclusive)."""
     if not LOG.exists():
         return []
     out = []
@@ -86,6 +87,11 @@ def read_events(limit=200, repo=None, event=None):
         if repo and o.get("repo") != repo:
             continue
         if event and o.get("event") != event:
+            continue
+        ts = o.get("ts", "")
+        if since and ts[:10] < since:
+            continue
+        if until and ts[:10] > until:
             continue
         out.append(o)
     return out[-limit:]

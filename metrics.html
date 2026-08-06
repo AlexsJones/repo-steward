@@ -8,6 +8,7 @@
     --ink: #1C2321; --muted: #5C6B66; --line: #D8DFDB;
     --accent: #175E54; --accent-soft: #E3EEEB;
     --s1: #0B7D5E; --s2: #3A5FA8; --s3: #9D4A87;
+    --s4: #B06D0E; --s5: #A44A4F; --s6: #4A7C59;
     --warn: #A66A1E; --warn-soft: #F5ECDC;
   }
   @media (prefers-color-scheme: dark) {
@@ -16,6 +17,7 @@
       --ink: #E4EAE7; --muted: #8CA097; --line: #2A342F;
       --accent: #4FB39F; --accent-soft: #1B322D;
       --s1: #149B77; --s2: #5E86E8; --s3: #C75B9F;
+      --s4: #DCA453; --s5: #D26A6F; --s6: #5FA071;
       --warn: #D19A4A; --warn-soft: #33281A;
     }
   }
@@ -24,6 +26,7 @@
     --ink: #1C2321; --muted: #5C6B66; --line: #D8DFDB;
     --accent: #175E54; --accent-soft: #E3EEEB;
     --s1: #0B7D5E; --s2: #3A5FA8; --s3: #9D4A87;
+    --s4: #B06D0E; --s5: #A44A4F; --s6: #4A7C59;
     --warn: #A66A1E; --warn-soft: #F5ECDC;
   }
   :root[data-theme="dark"] {
@@ -31,6 +34,7 @@
     --ink: #E4EAE7; --muted: #8CA097; --line: #2A342F;
     --accent: #4FB39F; --accent-soft: #1B322D;
     --s1: #149B77; --s2: #5E86E8; --s3: #C75B9F;
+    --s4: #DCA453; --s5: #D26A6F; --s6: #5FA071;
     --warn: #D19A4A; --warn-soft: #33281A;
   }
   * { box-sizing: border-box; }
@@ -80,6 +84,12 @@
   <section>
     <h2>Tokens &amp; cost per tick</h2>
     <div class="card" id="usageChart"></div>
+  </section>
+
+  <section>
+    <h2>Cost by provider</h2>
+    <div class="tiles" id="costTiles"></div>
+    <div class="card" id="costChart" style="margin-top:12px"></div>
   </section>
 
   <section>
@@ -180,7 +190,22 @@
     var usage = (data.usage || []).filter(function (u) { return !u.error; });
     var metrics = data.metrics || [];
 
-    // ---- totals ----
+    // ---- totals & per-engine ----
+    var ENGINES = { claude: 's1', 'claude-decide': 's3', opencode: 's2', codex: 's4', gemini: 's5' };
+    function ec(e) { return '--' + (ENGINES[e] || 's6'); }
+    var byEngine = {};
+    usage.forEach(function (u) {
+      var e = u.engine || 'unknown';
+      byEngine[e] = byEngine[e] || { ticks: 0, cost: 0, in: 0, out: 0, dur: 0, engine: e };
+      var be = byEngine[e];
+      be.ticks++;
+      if (u.cost_usd != null) be.cost += u.cost_usd;
+      be.in += (u.input_tokens || 0);
+      be.out += (u.output_tokens || 0);
+      if (u.duration_ms) be.dur += u.duration_ms;
+    });
+    var engList = Object.values(byEngine).sort(function (a, b) { return b.cost - a.cost; });
+
     var totTok = 0, totCost = 0, totOut = 0;
     usage.forEach(function (u) {
       totTok += (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_read_tokens || 0) + (u.cache_creation_tokens || 0);
@@ -209,6 +234,17 @@
       ['<span class="mono">' + ticks + '</span>', 'snapshots'],
     ].map(function (t) { return '<div class="tile"><div class="v">' + t[0] + '</div><div class="k">' + t[1] + '</div></div>'; }).join('');
 
+    // ---- cost by provider tiles ----
+    var ct = document.getElementById('costTiles');
+    ct.innerHTML = engList.map(function (be) {
+      var name = be.engine === 'claude-decide' ? 'decisions' : be.engine;
+      var avg = be.ticks ? be.cost / be.ticks : 0;
+      return '<div class="tile" style="border-left:3px solid var(' + ec(be.engine) + ')">' +
+        '<div class="v" style="font-size:22px"><span class="mono">' + usd(be.cost) + '</span></div>' +
+        '<div class="k">' + name + ' · ' + be.ticks + ' tick' + (be.ticks === 1 ? '' : 's') +
+        (be.cost > 0 ? ' · avg ' + usd(avg) + '/tick' : '') + '</div></div>';
+    }).join('') || '<div class="card empty" style="grid-column:1/-1">No usage data yet.</div>';
+
     // ---- tokens per tick (bar, single series; tooltip = breakdown) ----
     var uc = document.getElementById('usageChart');
     if (!usage.length) {
@@ -232,7 +268,7 @@
         var h = Math.max(2, tot / max * (H - P.t - P.b));
         var y = H - P.b - h;
         svg += '<rect data-i="' + i + '" x="' + x + '" y="' + y + '" width="' + bw + '" height="' + h +
-               '" rx="4" fill="var(--s1)"/>' +
+               '" rx="4" fill="var(' + ec(u.engine || '') + ')"/>' +
                '<text x="' + (x + bw / 2) + '" y="' + (H - 6) + '" text-anchor="middle">' + hm(u.ts) + '</text>';
       });
       svg += '</svg>';
@@ -240,7 +276,7 @@
       uc.querySelectorAll('rect').forEach(function (r) {
         r.addEventListener('mousemove', function (ev) {
           var u = rows[+r.dataset.i];
-          showTip(ev, u.ts.replace('T', ' ').replace('Z', ' UTC') +
+          showTip(ev, '<b>' + (u.engine || '?') + '</b><br>' + u.ts.replace('T', ' ').replace('Z', ' UTC') +
             '<br>in ' + fmt(u.input_tokens) + ' · out ' + fmt(u.output_tokens) +
             '<br>cache read ' + fmt(u.cache_read_tokens) + ' · write ' + fmt(u.cache_creation_tokens) +
             '<br>cost ' + usd(u.cost_usd) + ' · ' + (u.duration_ms ? Math.round(u.duration_ms / 60000) + ' min' : '–') +
@@ -248,6 +284,57 @@
         });
         r.addEventListener('mouseleave', hideTip);
       });
+    }
+
+    // ---- cumulative cost by provider ----
+    var cc = document.getElementById('costChart');
+    if (!usage.length) {
+      cc.innerHTML = '<p class="empty">No usage data yet.</p>';
+    } else {
+      var engineOrder = engList.map(function (e) { return e.engine; });
+      var series = {};
+      var running = {};
+      engineOrder.forEach(function (e) { series[e] = []; running[e] = 0; });
+      usage.forEach(function (u) {
+        var e = u.engine || 'unknown';
+        if (running[e] != null) {
+          running[e] += (u.cost_usd || 0);
+        } else {
+          running[e] = (u.cost_usd || 0);
+          engineOrder.push(e);
+          series[e] = [];
+        }
+        engineOrder.forEach(function (en) {
+          series[en].push(running[en] || 0);
+        });
+      });
+      var maxC = Math.max.apply(null, engineOrder.map(function (e) { return running[e]; })) || 1;
+      var CW = 1040, CH = 160, CP = { l: 50, r: 8, t: 12, b: 32 };
+      var csvg = '<svg viewBox="0 0 ' + CW + ' ' + CH + '" width="100%" role="img" aria-label="Cumulative cost per provider">';
+      [0, 0.5, 1].forEach(function (f) {
+        var y = CP.t + (1 - f) * (CH - CP.t - CP.b);
+        csvg += '<line class="grid" x1="' + CP.l + '" x2="' + (CW - CP.r) + '" y1="' + y + '" y2="' + y + '"/>' +
+                '<text x="' + (CP.l - 6) + '" y="' + (y + 3) + '" text-anchor="end">$' + (maxC * f).toFixed(0) + '</text>';
+      });
+      var step = (CW - CP.l - CP.r) / Math.max(1, usage.length - 1);
+      engineOrder.forEach(function (e, ei) {
+        var pts = series[e].map(function (v, i) {
+          return (CP.l + i * step).toFixed(1) + ' ' + (CH - CP.b - (v / maxC) * (CH - CP.t - CP.b)).toFixed(1);
+        });
+        csvg += '<path d="M' + pts.join('L') + '" fill="none" stroke="var(' + ec(e) + ')" stroke-width="2"/>';
+        var lastV = series[e][series[e].length - 1];
+        var lx = CP.l + (series[e].length - 1) * step;
+        var ly = CH - CP.b - (lastV / maxC) * (CH - CP.t - CP.b);
+        csvg += '<text x="' + (lx + 6) + '" y="' + (ly + 4) + '" fill="var(' + ec(e) + ')" font-weight="600" font-size="11">' +
+          (e === 'claude-decide' ? 'decisions' : e) + ' $' + lastV.toFixed(2) + '</text>';
+      });
+      csvg += '<text x="' + CP.l + '" y="' + (CH - 4) + '">' + day(usage[0].ts) + '</text>' +
+              '<text x="' + (CW - CP.r) + '" y="' + (CH - 4) + '" text-anchor="end">' + day(usage[usage.length - 1].ts) + '</text></svg>';
+      cc.innerHTML = '<p class="legend">' +
+        engineOrder.map(function (e) {
+          return '<span><span class="sw" style="background:var(' + ec(e) + ')"></span>' +
+            (e === 'claude-decide' ? 'decisions' : e) + '</span>';
+        }).join('') + '</p>' + csvg;
     }
 
     // ---- attention by repo (horizontal bars) ----

@@ -26,9 +26,9 @@ Static file serving plus a minimal control API:
         pending for the next tick (STEWARD.md step 0)
         body: {"repo": "llmfit", "refs": [...], "title": "...", "decision": "..."}
   GET  /api/decisions         -> recent decision entries + executor state
-  GET  /api/audit?repo=&event=&limit= -> events from the decision log
-        (audit.jsonl — see audit.py for the schema; every mutating endpoint
-        here appends its event at the moment it acts)
+  GET  /api/audit?repo=&event=&limit=&since=&until= -> events from the decision log
+         (audit.jsonl — see audit.py for the schema; every mutating endpoint
+         here appends its event at the moment it acts. since/until are YYYY-MM-DD dates.)
 
 Approvals run under the local gh auth — i.e. as Alex, because a human clicked.
 Ledger writes are refused while a tick or the decision executor is active to
@@ -643,7 +643,9 @@ class Handler(SimpleHTTPRequestHandler):
                 limit = 200
             return self._json(200, {"events": audit.read_events(
                 limit=limit, repo=qs.get("repo", [None])[0],
-                event=qs.get("event", [None])[0])})
+                event=qs.get("event", [None])[0],
+                since=qs.get("since", [None])[0],
+                until=qs.get("until", [None])[0])})
         if parsed.path == "/api/staged":
             qs = parse_qs(parsed.query)
             short = qs.get("repo", [""])[0]

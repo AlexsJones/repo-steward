@@ -55,13 +55,13 @@
   .tile .v { font: 600 26px/1.2 ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
   .tile .k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin-top: 2px; }
   .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
-  .toolbar select, .toolbar input[type=search] {
+  .toolbar select, .toolbar input[type=search], .toolbar input[type=date] {
     font: 600 12.5px ui-monospace, Menlo, monospace; padding: 7px 9px; border-radius: 7px;
     border: 1px solid var(--line); background: var(--panel); color: var(--ink);
   }
   .toolbar select { cursor: pointer; }
   .toolbar input[type=search] { flex: 1; min-width: 160px; font-weight: 400; }
-  .toolbar input[type=search]:focus, .toolbar select:focus { outline: none; border-color: var(--accent); }
+  .toolbar input[type=search]:focus, .toolbar input[type=date]:focus, .toolbar select:focus { outline: none; border-color: var(--accent); }
   #count { font: 11.5px ui-monospace, Menlo, monospace; color: var(--muted); white-space: nowrap; }
   .dl { display: flex; gap: 8px; }
   .dl a, .dl button {
@@ -105,6 +105,7 @@
       <select id="f-actor"></select>
       <select id="f-event"></select>
       <select id="f-repo"></select>
+      <input id="f-date" type="date" title="filter to a single day (YYYY-MM-DD); clear to see all">
       <input id="f-q" type="search" placeholder="search summaries, details, items…">
       <span id="count"></span>
     </div>
@@ -131,11 +132,13 @@
     var a = document.getElementById('f-actor').value;
     var e = document.getElementById('f-event').value;
     var r = document.getElementById('f-repo').value;
+    var d = document.getElementById('f-date').value;
     var q = document.getElementById('f-q').value.trim().toLowerCase();
     return events.filter(function (ev) {
       if (a && ev.actor !== a) return false;
       if (e && ev.event !== e) return false;
       if (r && ev.repo !== r) return false;
+      if (d && (ev.ts || '').slice(0, 10) !== d) return false;
       if (q) {
         var hay = [ev.summary, ev.detail, ev.repo, ev.ref, ev.event].join(' ').toLowerCase();
         if (hay.indexOf(q) === -1) return false;
@@ -232,6 +235,9 @@
     fill('f-actor', 'all actors', 'actor');
     fill('f-event', 'all events', 'event');
     fill('f-repo', 'all repos', 'repo');
+    var dateEl = document.getElementById('f-date');
+    dateEl.value = new Date().toISOString().slice(0, 10);
+    dateEl.addEventListener('change', render);
     document.getElementById('f-q').addEventListener('input', render);
     tiles();
     render();

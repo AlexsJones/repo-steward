@@ -32,6 +32,12 @@ limits:
   # 0 = no floor (the steward will reach for years-old items indefinitely).
   activity_floor_days: 90
 
+  # In live mode, auto-merge PRs the steward reviewed and approved when they
+  # have sat unchanged for at least this many days (the steward's approval
+  # posted at the current head, no author pushes since). 0 = never auto-merge;
+  # the maintainer must ✓ approve & merge each one from the dashboard.
+  auto_merge_after_days: 7
+
 # Optional: sites probed every few minutes by uptime_check.py (no tokens).
 # repo links the site to where the steward investigates when it goes down.
 sites:

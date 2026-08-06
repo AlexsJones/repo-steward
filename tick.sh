@@ -68,9 +68,32 @@ case "$ENGINE" in
     echo "{\"ts\":\"$TS\",\"rc\":$RC,\"engine\":\"gemini\",\"note\":\"usage not reported by this engine\"}" >> usage.jsonl
     ;;
   opencode)
-    OUT="$("$BIN" run ${MODEL:+--model "$MODEL"} "$PROMPT" 2>&1)"; RC=$?
-    { echo "=== tick $TS engine=opencode (rc=$RC) ==="; echo "$OUT"; } >> logs/tick.log
-    echo "{\"ts\":\"$TS\",\"rc\":$RC,\"engine\":\"opencode\",\"note\":\"usage not reported by this engine\"}" >> usage.jsonl
+    OUT="$("$BIN" run ${MODEL:+--model "$MODEL"} --format json "$PROMPT" 2>&1)"; RC=$?
+    # Log the readable text output to tick.log
+    { echo "=== tick $TS engine=opencode (rc=$RC) ==="; echo "$OUT" | jq -r 'select(.type=="text") | .part.text // empty' 2>/dev/null; } >> logs/tick.log
+    # Aggregate tokens and cost from all step_finish events
+    echo "$OUT" | jq -cn --arg ts "$TS" --argjson rc "$RC" '
+      reduce inputs as $line (
+        {steps:0, cost:0, input:0, output:0, cache_read:0, cache_write:0, reasoning:0};
+        if $line.type == "step_finish" then
+          .steps += 1 |
+          .cost     += ($line.part.cost // 0) |
+          .input    += ($line.part.tokens.input // 0) |
+          .output   += ($line.part.tokens.output // 0) |
+          .reasoning += ($line.part.tokens.reasoning // 0) |
+          .cache_read  += ($line.part.tokens.cache.read // 0) |
+          .cache_write += ($line.part.tokens.cache.write // 0)
+        else . end
+      ) |
+      if .steps > 0 then
+        {ts: $ts, rc: $rc, engine: "opencode",
+         cost_usd: .cost, input_tokens: .input, output_tokens: .output,
+         cache_read_tokens: .cache_read, cache_creation_tokens: .cache_write,
+         num_turns: .steps}
+      else
+        {ts: $ts, rc: $rc, engine: "opencode", note: "usage not reported by this engine"}
+      end
+    ' >> usage.jsonl
     ;;
   custom)
     [[ -n "${STEWARD_ENGINE_CMD:-}" ]] || { echo "engine=custom requires STEWARD_ENGINE_CMD" >> logs/tick.log; exit 1; }
