@@ -83,10 +83,38 @@ Pin a model or change cadence via env at install time:
 
 ```bash
 # every half hour on a strong model
-STEWARD_MODEL=claude-opus-4-8 STEWARD_CADENCE="*-*-* *:07,37:00" ./install.sh
+STEWARD_MODEL=claude-opus-5 STEWARD_CADENCE="*-*-* *:07,37:00" ./install.sh
 # or one bigger tick each morning (raise `limits` in config.yaml to match)
 STEWARD_CADENCE="*-*-* 07:00:00" ./install.sh
 ```
+
+`STEWARD_MODEL` is baked into the systemd unit and handed to the engine as
+`--model` on every tick. On the default Claude Code engine, use either the
+full ID (`claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`) or an alias
+(`opus`, `sonnet`, `haiku`) that tracks the newest model in that family; leave
+it unset to take the CLI's own default. Switching later means re-running the
+installer with the new value — and every install rewrites the unit from the
+environment you hand it, so an omitted variable is *not* carried over from the
+previous install: `STEWARD_MODEL` reverts to unpinned and `STEWARD_ENGINE`
+reverts to `claude`. Pass both whenever you mean to keep both:
+
+```bash
+STEWARD_MODEL=claude-opus-5 ./install.sh   # Opus 5 on Claude Code
+./install.sh                               # no model pin, engine back to claude
+STEWARD_ENGINE=opencode STEWARD_MODEL=ollama/qwen3 ./install.sh   # keep both
+```
+
+To confirm what the *next* tick will use, read the unit rather than the log —
+`logs/tick.log` only gains a `=== tick <ts> engine=<name> ===` header when a
+tick finishes, so just after an install its tail still describes the old setup:
+
+```bash
+systemctl --user show repo-steward.service -p Environment
+```
+
+That is separate from your own Claude Code sessions, which the steward never
+touches — switch those with `/model opus` inside a session, or
+`claude --model claude-opus-5` when launching one.
 
 ### AI backends
 

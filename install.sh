@@ -10,7 +10,7 @@
 #   STEWARD_ENGINE     agent CLI running the tick: claude (default) | codex |
 #                      gemini | opencode | custom
 #   STEWARD_ENGINE_CMD full command for engine=custom ($PROMPT is exported)
-#   STEWARD_MODEL      pin a model for ticks (e.g. claude-opus-4-8); default:
+#   STEWARD_MODEL      pin a model for ticks (e.g. claude-opus-5); default:
 #                      the engine's own default
 #   STEWARD_PORT       dashboard port (default 8377)
 #   STEWARD_CADENCE    systemd OnCalendar for ticks (default "*-*-* *:17:00" = hourly at :17)
