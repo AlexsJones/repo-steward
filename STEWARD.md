@@ -139,8 +139,41 @@ no metrics counting for that resource):
 ```
 gh issue list -R <owner/repo> --state open --json number,title,author,createdAt,updatedAt,labels,comments
 gh pr list   -R <owner/repo> --state open --json number,title,author,createdAt,updatedAt,isDraft,reviewDecision,statusCheckRollup,additions,deletions,headRefName
-gh search issues/prs closed since cursor (for outflow metrics)
 ```
+**Do not use `gh search`, `gh search issues`, or GitHub's `/search/*` API.**
+Search has a separate, very small rate limit (30 requests/minute) and is not
+needed for this work. For closed-item outflow metrics, make at most one
+GraphQL request per repo/page and filter the returned timestamps locally:
+```
+gh api graphql -f query='query($o:String!,$n:String!){repository(owner:$o,name:$n){
+  issues(first:100,states:CLOSED,orderBy:{field:UPDATED_AT,direction:DESC}){
+    pageInfo{hasNextPage endCursor} nodes{number closedAt updatedAt}}
+  pullRequests(first:100,states:MERGED,orderBy:{field:UPDATED_AT,direction:DESC}){
+    pageInfo{hasNextPage endCursor} nodes{number mergedAt updatedAt}}}}' \
+  -f o=<owner> -f n=<repo>
+```
+Count only issues with `closedAt >= cursor` and PRs with `mergedAt >= cursor`.
+If a page can still contain an item newer than the cursor, paginate that
+connection using its `endCursor`; otherwise stop. Never substitute zero for a
+failed query.
+
+### GitHub network failure policy
+
+For every **read-only** GitHub call in this tick (`gh api`, `gh issue/pr list`
+or `view`, GraphQL), invoke it through `bash gh_retry.sh gh ...`. It retries
+only transient network/server failures at 2, 5, and 10 seconds (four attempts
+total). Emit a progress line before a retry so the dashboard remains honest.
+Never retry a mutation automatically (comment, label, review, merge, close,
+or push): after a connection failure, re-read the resource first because the
+write may already have succeeded.
+
+At the first GitHub rate-limit response from **any** endpoint, stop all
+remaining GitHub work immediately, record one `github-api` escalation/activity
+event, and leave this tick incomplete. Do not issue another GitHub request in
+that tick. After transient read retries are exhausted, record a `github-api`
+network escalation/activity event and leave the tick incomplete; do not
+advance any cursor or write zero-valued metrics for the failed resource.
+
 Fetch **Discussions** where watched and the repo has them enabled on GitHub. Repo discussions
 are GraphQL-only (no `gh discussion` verb), so list them with:
 ```

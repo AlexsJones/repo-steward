@@ -427,7 +427,7 @@
   document.body.appendChild(toastWrap);
   function toast(msg, kind) {
     var t = document.createElement('div');
-    var tone = kind === 'ok' ? 'var(--ok)' : kind === 'warn' ? 'var(--warn)' : 'var(--accent)';
+    var tone = kind === 'ok' ? 'var(--ok)' : kind === 'warn' ? 'var(--warn)' : kind === 'error' ? 'var(--crit)' : 'var(--accent)';
     t.style.cssText = 'background:var(--panel);color:var(--ink);border-left:3px solid ' + tone +
       ';box-shadow:0 2px 10px rgba(0,0,0,.28);border-radius:6px;padding:10px 14px;font-size:13px;max-width:340px;opacity:0;transition:opacity .2s;';
     t.textContent = msg;
@@ -708,9 +708,18 @@
         }).catch(function () {});
       }
       if (wasBusy && !s.tick_active) {
-        toast('Tick complete — refreshing the board…', 'ok');
+        var result = s.last_tick || {};
+        if (result.ok) {
+          toast('Tick complete — refreshing the board…', 'ok');
+        } else if (result.rc === 75) {
+          toast('Tick incomplete — GitHub rate limit or network retries exhausted. Board not refreshed.', 'warn');
+        } else {
+          toast('Tick failed (exit ' + (result.rc == null ? '?' : result.rc) + '). Board not refreshed.', 'error');
+        }
         seenItemKeys = {};
-        setTimeout(function () { location.reload(); }, 1500);
+        // A partial run must not present its stale/generated dashboard as a
+        // finished board. Successful ticks keep the existing fast refresh.
+        if (result.ok) setTimeout(function () { location.reload(); }, 1500);
       }
       wasBusy = s.tick_active;
     }).catch(function () { btn.textContent = 'api unreachable'; });

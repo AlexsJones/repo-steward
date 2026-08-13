@@ -236,6 +236,30 @@ def tick_active():
     return state in ("active", "activating")
 
 
+def latest_tick_result():
+    """The last completed tick, from the wrapper's authoritative audit line.
+    This is intentionally independent of service state: systemd becomes
+    inactive just after tick.sh has recorded the result."""
+    p = ROOT / "audit.jsonl"
+    if not p.exists():
+        return None
+    for line in reversed(p.read_text().splitlines()):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("event") != "tick_done" or event.get("via") != "tick":
+            continue
+        data = event.get("data") or {}
+        return {
+            "ts": event.get("ts"),
+            "ok": bool(event.get("ok")),
+            "rc": data.get("rc"),
+            "summary": event.get("summary", "tick finished"),
+        }
+    return None
+
+
 # The decision executor is single-flight: one decide.sh at a time, and never
 # alongside a tick — both rewrite ledgers. decide.sh maintains .decide.pid so
 # a run spawned elsewhere (tick.sh pre-drains pending decisions) is seen too.

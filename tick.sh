@@ -58,7 +58,11 @@ case "$ENGINE" in
     fi
     ;;
   codex)
-    OUT="$("$BIN" exec ${MODEL:+--model "$MODEL"} "$PROMPT" 2>&1)"; RC=$?
+    # A live steward needs both workspace writes and GitHub API access.
+    # Codex's workspace-write sandbox permits the former but blocks network
+    # access, so run this unattended, externally scoped service in its
+    # full-access sandbox.
+    OUT="$("$BIN" exec --sandbox danger-full-access ${MODEL:+--model "$MODEL"} "$PROMPT" 2>&1)"; RC=$?
     { echo "=== tick $TS engine=codex (rc=$RC) ==="; echo "$OUT"; } >> logs/tick.log
     echo "{\"ts\":\"$TS\",\"rc\":$RC,\"engine\":\"codex\",\"note\":\"usage not reported by this engine\"}" >> usage.jsonl
     ;;
@@ -106,6 +110,15 @@ case "$ENGINE" in
     ;;
 esac
 
+# Agents sometimes report an API stop as a successful conversational
+# completion. The activity feed is the durable evidence of that operational
+# failure, so never let it become a green tick in the dashboard/audit trail.
+if [[ -s activity.jsonl ]] && \
+   jq -e 'select(.kind == "escalated" and .ref == "github-api")' \
+      activity.jsonl >/dev/null 2>&1; then
+  RC=75
+fi
+
 # Record real per-chunk completion offsets (seconds from tick start, from file
 # mtimes) so the dashboard can estimate remaining time by chunk, not wall clock.
 # Chunks: one per repo ledger, plus the metrics and dashboard writes.
@@ -137,6 +150,11 @@ DUR=$(( $(date +%s) - START_EPOCH ))
 printf '{"v":1,"ts":"%s","actor":"system","via":"tick","event":"tick_done","ok":%s,"summary":"tick finished (rc=%s, %sm)","data":{"rc":%s,"engine":"%s","duration_ms":%s}}\n' \
   "$TS" "$([[ $RC -eq 0 ]] && echo true || echo false)" "$RC" "$(( DUR / 60 ))" "$RC" "$ENGINE" "$(( DUR * 1000 ))" >> audit.jsonl
 
-printf '{"ts":"%s","phase":"done","rc":%s,"msg":"tick complete"}\n' \
-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RC" >> progress.jsonl
+if [[ $RC -eq 0 ]]; then
+  DONE_MSG="tick complete"
+else
+  DONE_MSG="tick incomplete (rc=$RC)"
+fi
+printf '{"ts":"%s","phase":"done","rc":%s,"msg":"%s"}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RC" "$DONE_MSG" >> progress.jsonl
 exit $RC
