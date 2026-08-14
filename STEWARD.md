@@ -353,7 +353,13 @@ The sections are role-based and MUST NOT overlap — each staged item appears in
 exactly one of them:
 - **Decisions needed** (escalations) — most prominent. Things the maintainer
   must choose between; not postable until they decide. Each `.decision` block
-  keeps a link to its repo so the lens can filter it.
+  keeps a link to its repo so the lens can filter it. Add
+  `data-resolve-on="<comma-separated GitHub URLs>"` naming ONLY the items whose
+  settlement actually answers the question — the controls script fades the block
+  once every one of them is merged/closed. Omit the attribute for questions no
+  merge can answer (policy, repo settings, API vocabulary): a decision with no
+  attribute is never auto-faded. Never list items the block merely cites as
+  evidence; a PR quoted to show *why* you are asking is not the answer to it.
 - **Ready for your final look** — PRs at `approve-recommend` ONLY, one row each
   with the steward's rationale. This is the recommend-to-merge shortlist; the
   row's ⌄ expander shows the full staged review, so these are NOT repeated in
