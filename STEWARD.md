@@ -198,12 +198,15 @@ its ledger initialized with every open item at status `backlog`.
 The sync above only lists **open** items — so an escalated PR/issue the
 maintainer merged or closed directly will have vanished from those lists, NOT
 appear as resolved. For every open decision in `escalations.md`, explicitly
-re-check its referenced item(s): `gh pr view <n> -R <repo> --json state,merged`
-or `gh issue view <n> -R <repo> --json state`. If an item is merged/closed, or
-the maintainer has clearly decided it in a comment, mark that escalation
-`✅ RESOLVED` (with a one-line note on what they did) and DROP it from Decisions
-needed. Never leave a decided item sitting in the queue — that is the single
-most annoying failure mode for the maintainer. If resolution leaves cleanup
+re-check its referenced item(s): `gh pr view <n> -R <repo> --json state,mergedAt`
+or `gh issue view <n> -R <repo> --json state`. (`merged` is NOT a `gh pr view`
+field — asking for it exits 1 with "Unknown JSON field" and reconciliation
+silently does nothing. A PR is merged when `state` is `MERGED`.) If an item is
+merged/closed, or the maintainer has clearly decided it in a comment, mark that
+escalation `✅ RESOLVED` (with a one-line note on what they did) and DROP it
+from Decisions needed. Never leave a decided item sitting in the queue — that
+is the single most annoying failure mode for the maintainer. If resolution
+leaves cleanup
 (e.g. they merged #650 of a #650/#651 pair, so #651 is now superseded), note
 the cleanup as a light queued item, not a standing decision.
 
@@ -246,6 +249,21 @@ Order candidate work (highest first):
 4. Backlog drain: oldest un-triaged items — within the scope gate only.
 5. Stale items (no movement > 21 days, but inside the floor): draft a nudge, or
    propose close as an escalation (closing is the maintainer's call).
+
+**Spend the budget — the queue is the whole ledger, not the cursor diff.** The
+sync in step 1 tells you what *changed*; it does not tell you what is *owed*.
+Rules 1–3 usually drain in minutes because they only see new inflow, and a tick
+that stops there reports success while `status: backlog` items pile up
+untouched for months. So: after working rules 1–3, if either limit still has
+slots left, you MUST continue into rules 4 and 5 — reading every repo's ledger
+for in-scope items at `backlog` with no `last_action`, oldest last-activity
+first, across all repos and not just the one with fresh traffic — until the
+substantive or light limit is actually reached or no in-scope backlog remains.
+Ending a tick with unused budget and in-scope backlog outstanding is a failed
+tick, not a quiet one. Report the remaining in-scope backlog count per repo in
+the dashboard activity section alongside the scope-gate drop count; a steward
+that looks idle because it never looked is the failure this rule exists to
+prevent.
 
 ### 3. Execute (within limits)
 Every drafted comment, review, and reply below follows `VOICE.md` — re-read
