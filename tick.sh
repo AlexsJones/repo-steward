@@ -5,6 +5,9 @@
 #   STEWARD_ENGINE_BIN  resolved binary for the engine
 #   STEWARD_ENGINE_CMD  full command template for engine=custom ($PROMPT is exported)
 #   STEWARD_MODEL       optional model override
+# Exit codes: 0 = complete; 75 = stopped on a GitHub API escalation;
+#   76 = ended early, one or more chunks (repo ledgers / metrics / dashboard)
+#   never written; anything else is the engine's own exit status.
 set -uo pipefail
 STEWARD_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$STEWARD_HOME"
@@ -117,6 +120,37 @@ if [[ -s activity.jsonl ]] && \
    jq -e 'select(.kind == "escalated" and .ref == "github-api")' \
       activity.jsonl >/dev/null 2>&1; then
   RC=75
+fi
+
+# A tick that stops mid-queue is a failed tick even when the engine exits 0 —
+# agents report an early stop conversationally, not in their exit status. The
+# durable evidence is on disk: a completed tick rewrites every repo ledger (the
+# cursor advances), then metrics.jsonl and dashboard.html. Anything untouched
+# since START_EPOCH is a chunk that never ran, so refuse the green tick.
+MISSING=()
+while IFS= read -r repo; do
+  [[ -n "$repo" ]] || continue
+  f="state/${repo##*/}.json"
+  if [[ ! -e "$f" ]] || (( $(stat -c %Y "$f" 2>/dev/null || echo 0) < START_EPOCH )); then
+    MISSING+=("${repo##*/}")
+  fi
+done < <(sed -n 's/^[[:space:]]*-[[:space:]]*name:[[:space:]]*"\{0,1\}\([^"[:space:]#]*\).*/\1/p' config.yaml)
+
+for f in metrics.jsonl dashboard.html; do
+  if [[ ! -e "$f" ]] || (( $(stat -c %Y "$f" 2>/dev/null || echo 0) < START_EPOCH )); then
+    MISSING+=("$(basename "$f" | sed 's/\.[^.]*$//')")
+  fi
+done
+
+if (( ${#MISSING[@]} > 0 )); then
+  { echo "=== tick $TS incomplete: ${#MISSING[@]} chunk(s) never written: ${MISSING[*]} ==="; } >> logs/tick.log
+  printf '{"ts":"%s","phase":"incomplete","msg":"chunks never written: %s"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${MISSING[*]}" >> progress.jsonl
+  jq -cn --arg ts "$TS" --arg chunks "${MISSING[*]}" \
+    '{v:1, actor:"system", via:"tick", event:"tick_incomplete", ok:false,
+      summary:("tick ended early — chunks never written: " + $chunks),
+      data:{missing_chunks:($chunks | split(" "))}}' >> audit.jsonl
+  (( RC == 0 )) && RC=76
 fi
 
 # Record real per-chunk completion offsets (seconds from tick start, from file
