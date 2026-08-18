@@ -93,6 +93,21 @@ def repo_map():
     return m
 
 
+REF_PATH = {"pr": "pull", "issue": "issues", "disc": "discussions"}
+
+
+def ref_url(full_repo, ref):
+    """owner/repo + a ledger ref (pr-123/issue-45/disc-7) -> its GitHub URL,
+    or None when either half is missing/unrecognised."""
+    if not full_repo or not ref:
+        return None
+    kind, _, num = ref.partition("-")
+    path = REF_PATH.get(kind)
+    if not path or not num.isdigit():
+        return None
+    return f"https://github.com/{full_repo}/{path}/{num}"
+
+
 RESOURCES = ("issues", "prs", "discussions")
 
 
@@ -632,6 +647,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "schedule": current_schedule(),
                 "limits": read_limits(),
                 "signature_enabled": signature_enabled(),
+                "last_tick": latest_tick_result(),
                 # The first-run page polls this to swap itself for the real
                 # dashboard as soon as a tick has written one.
                 "dashboard_ready": (ROOT / "dashboard.html").exists(),
@@ -665,11 +681,17 @@ class Handler(SimpleHTTPRequestHandler):
                 limit = min(int(qs.get("limit", ["200"])[0]), 2000)
             except ValueError:
                 limit = 200
-            return self._json(200, {"events": audit.read_events(
+            events = audit.read_events(
                 limit=limit, repo=qs.get("repo", [None])[0],
                 event=qs.get("event", [None])[0],
                 since=qs.get("since", [None])[0],
-                until=qs.get("until", [None])[0])})
+                until=qs.get("until", [None])[0])
+            rmap = repo_map()
+            for e in events:
+                u = ref_url(rmap.get(e.get("repo", "")), e.get("ref"))
+                if u:
+                    e["url"] = u
+            return self._json(200, {"events": events})
         if parsed.path == "/api/staged":
             qs = parse_qs(parsed.query)
             short = qs.get("repo", [""])[0]

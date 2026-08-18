@@ -76,6 +76,8 @@
   .ev .meta { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; font: 11.5px ui-monospace, Menlo, monospace; color: var(--muted); }
   .ev .actor { font-weight: 600; padding: 1px 8px; border-radius: 999px; }
   .ev .where { font-weight: 600; color: var(--ink); }
+  .ev .where a { color: inherit; text-decoration: none; }
+  .ev .where a:hover { text-decoration: underline; color: var(--accent); }
   .ev .summary { font-size: 13.5px; line-height: 1.5; margin-top: 3px; }
   .ev .detail { font: 11.5px/1.5 ui-monospace, Menlo, monospace; color: var(--muted); margin-top: 3px; word-break: break-word; }
   .ev .fail { font-weight: 600; color: var(--crit); }
@@ -156,7 +158,11 @@
       '<span>' + esc((e.ts || '').slice(11, 19)) + '</span>' +
       '<span class="actor" style="background:var(--' + tone + '-soft);color:var(--' + tone + ')">' + esc(e.actor || '?') + '</span>' +
       '<span>' + (ICON[e.event] || '·') + ' ' + esc(e.event || '?') + esc(kind) + '</span>' +
-      (e.repo ? '<span class="where">' + esc(e.repo) + (e.ref ? ' ' + esc(e.ref) : '') + '</span>' : '') +
+      (e.repo ? '<span class="where">' + esc(e.repo) +
+        (e.ref ? ' ' + (e.url ?
+          '<a href="' + esc(e.url) + '" target="_blank" rel="noopener">' + esc(e.ref) + '</a>' :
+          esc(e.ref)) : '') +
+        '</span>' : '') +
       (e.via ? '<span>via ' + esc(e.via) + '</span>' : '') +
       (failed ? '<span class="fail">failed</span>' : '') +
       '</div>' +
