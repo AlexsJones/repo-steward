@@ -194,15 +194,19 @@ every action lands in the `approvals.jsonl` audit trail:
 - **Approve & merge** (Ready table) — executes the staged review via `gh`
   under your auth, then merges (method from `merge_method:` in config, else
   the first the repo allows: squash → merge → rebase). Works even in draft
-  mode: clicking is you acting.
+  mode: clicking is you acting. If strict branch protection says the approved
+  PR is behind `main`, the same click uses GitHub's update-branch endpoint,
+  then queues auto-merge while the refreshed checks run. This is limited to
+  that explicit click; a background tick never writes to a contributor branch.
 - **Typed decisions** (Decisions section) — type e.g. *"go with #650, close
   #651 as superseded"* and press Enter. The server records it to
   `decisions.jsonl` and runs `decide.sh`: a focused engine session that
   interprets your text and carries it out — comments, labels, ledger updates.
   Explicit merge/close instructions are executed by the server itself (the
   engine session stays mechanically denied those verbs; it *requests* them
-  from `/api/terminal`, which only answers while a decision executor is
-  running). If your text is too ambiguous to act on safely, the entry comes
+  from `/api/terminal`, which answers decision executors and narrowly verified
+  live-tick auto-merges of unchanged steward-approved PRs after the configured
+  grace period). If your text is too ambiguous to act on safely, the entry comes
   back asking for clarification instead of guessing. Decisions typed while a
   tick runs queue and drain as soon as the steward is free.
 - **Dismiss** — drops a staged item without posting; recorded like everything

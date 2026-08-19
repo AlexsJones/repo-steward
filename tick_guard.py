@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""Mechanical postconditions for an agent-driven steward tick.
+
+The agent owns judgement and GitHub actions.  This helper owns the facts that
+must not depend on the agent following prose perfectly: workflow history in a
+ledger is monotonic, and a sync-only run is not successful while actionable
+work remains.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import re
+from pathlib import Path
+
+
+WORKFLOW_FIELDS = (
+    "status",
+    "iterations",
+    "last_action",
+    "last_action_at",
+    "verdict",
+    "staged_actions",
+    "notes",
+    "approve_recommend_since",
+    "head_oid",
+)
+ACTION_KINDS = {"staged", "posted", "labeled", "fix_pr", "escalated", "merged"}
+
+
+def read_json(path: Path) -> dict:
+    with path.open(encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def write_json(path: Path, value: dict) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        json.dump(value, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    tmp.replace(path)
+
+
+def has_workflow_evidence(item: dict) -> bool:
+    return bool(
+        item.get("status") not in (None, "backlog", "done", "dismissed")
+        or item.get("last_action")
+        or item.get("last_action_at")
+        or item.get("verdict")
+        or item.get("staged_actions")
+    )
+
+
+def looks_reset(item: dict) -> bool:
+    return (
+        item.get("status") == "backlog"
+        and item.get("iterations", 0) == 0
+        and item.get("last_action") is None
+        and item.get("last_action_at") is None
+        and item.get("verdict") is None
+        and not item.get("staged_actions")
+    )
+
+
+def merge_notes(old: str | None, new: str | None) -> str:
+    old, new = (old or "").strip(), (new or "").strip()
+    if not old:
+        return new
+    if not new or new in old:
+        return old
+    if old in new:
+        return new
+    return f"{old} {new}"
+
+
+def repair_ledgers(before_dir: Path, state_dir: Path) -> dict:
+    repaired_items: list[str] = []
+    preserved_fields = 0
+    for current_path in sorted(state_dir.glob("*.json")):
+        before_path = before_dir / current_path.name
+        if not before_path.exists():
+            continue
+        before, current = read_json(before_path), read_json(current_path)
+        changed = False
+        for key, item in current.get("items", {}).items():
+            old = before.get("items", {}).get(key)
+            if not old:
+                continue
+
+            # This exact shape is produced when a sync rebuilds an open item
+            # from GitHub and forgets to overlay its existing workflow state.
+            if looks_reset(item) and has_workflow_evidence(old):
+                fresh_notes = item.get("notes")
+                for field in WORKFLOW_FIELDS:
+                    if field in old:
+                        item[field] = old[field]
+                item["notes"] = merge_notes(old.get("notes"), fresh_notes)
+                repaired_items.append(f"{current_path.stem}:{key}")
+                changed = True
+                continue
+
+            # Even legitimate transitions must not erase the durable record of
+            # what happened previously.  Fresh non-null values always win.
+            for field in ("last_action", "last_action_at", "approve_recommend_since", "head_oid"):
+                if item.get(field) is None and old.get(field) is not None:
+                    item[field] = old[field]
+                    preserved_fields += 1
+                    changed = True
+        if changed:
+            write_json(current_path, current)
+    return {"repaired_items": repaired_items, "preserved_fields": preserved_fields}
+
+
+def recover_from_audit(state_dir: Path, audit_path: Path) -> dict:
+    """Recover blank open entries after damage has already reached disk."""
+    latest: dict[tuple[str, str], dict] = {}
+    if audit_path.exists():
+        for line in audit_path.read_text(encoding="utf-8").splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("event") != "steward_action" or event.get("kind") not in ACTION_KINDS:
+                continue
+            repo, ref = event.get("repo"), event.get("ref")
+            if repo and ref:
+                previous = latest.get((repo, ref))
+                if previous is None or event.get("ts", "") >= previous.get("ts", ""):
+                    latest[(repo, ref)] = event
+
+    recovered: list[str] = []
+    for path in sorted(state_dir.glob("*.json")):
+        state, changed = read_json(path), False
+        for key, item in state.get("items", {}).items():
+            event = latest.get((path.stem, key))
+            if not event or not looks_reset(item):
+                continue
+            kind, summary = event["kind"], event.get("summary", "")
+            if kind == "fix_pr":
+                status = "fix-in-flight"
+            elif kind == "escalated":
+                status = "escalated"
+            elif kind == "labeled":
+                status = "triaged"
+            elif item.get("type") == "pr":
+                if re.search(r"\bapprov(?:e|ed|ing|al)|approve-recommend", summary, re.I):
+                    status = "ready-for-maintainer"
+                    item["verdict"] = "approve-recommend"
+                else:
+                    status = "reviewed"
+            else:
+                status = "posted"
+            item.update(
+                status=status,
+                last_action=summary,
+                last_action_at=event.get("ts"),
+            )
+            recovered.append(f"{path.stem}:{key}")
+            changed = True
+        if changed:
+            write_json(path, state)
+    return {"recovered_items": recovered}
+
+
+def activity_floor_days(config_path: Path) -> int:
+    match = re.search(
+        r"^[ \t]*activity_floor_days:[ \t]*(\d+)",
+        config_path.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    return int(match.group(1)) if match else 0
+
+
+def work_budget_floor(config_path: Path) -> int:
+    text = config_path.read_text(encoding="utf-8")
+    values = []
+    for name in ("substantive_items_per_tick", "light_items_per_tick"):
+        match = re.search(rf"^[ \t]*{name}:[ \t]*(\d+)", text, re.MULTILINE)
+        if match and int(match.group(1)) > 0:
+            values.append(int(match.group(1)))
+    return min(values) if values else 1
+
+
+def conversation_budget_floor(config_path: Path) -> int:
+    match = re.search(
+        r"^[ \t]*min_conversation_actions_per_tick:[ \t]*(\d+)",
+        config_path.read_text(encoding="utf-8"), re.MULTILINE,
+    )
+    return int(match.group(1)) if match else 0
+
+
+def in_scope(item: dict, cutoff: str | None) -> bool:
+    if "steward-keep" in (item.get("labels") or []):
+        return True
+    if cutoff is None:
+        return True
+    activity = item.get("last_activity_at") or item.get("github_updated_at") or item.get("created_at")
+    return bool(activity and activity >= cutoff)
+
+
+def is_actionable(item: dict, cutoff: str | None) -> bool:
+    if not in_scope(item, cutoff) or item.get("status") in {
+        "done", "dismissed", "ready-for-maintainer", "escalated"
+    }:
+        return False
+    if item.get("status") == "backlog" and not item.get("last_action"):
+        return True
+    last_activity = item.get("last_activity_at") or item.get("github_updated_at")
+    last_action = item.get("last_action_at")
+    return bool(last_activity and last_action and last_activity > last_action)
+
+
+def check_tick(state_dir: Path, config_path: Path, activity_path: Path, now: str) -> dict:
+    days = activity_floor_days(config_path)
+    cutoff = None
+    if days:
+        current = dt.datetime.fromisoformat(now.replace("Z", "+00:00"))
+        cutoff = (current - dt.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    by_repo: dict[str, int] = {}
+    conversation_by_repo: dict[str, int] = {}
+    for path in sorted(state_dir.glob("*.json")):
+        items = read_json(path).get("items", {}).values()
+        candidates = [item for item in items if is_actionable(item, cutoff)]
+        count = len(candidates)
+        if count:
+            by_repo[path.stem] = count
+        conversation_count = sum(item.get("type") in {"issue", "discussion"}
+                                 for item in candidates)
+        if conversation_count:
+            conversation_by_repo[path.stem] = conversation_count
+
+    actions = 0
+    conversation_actions = 0
+    if activity_path.exists():
+        for line in activity_path.read_text(encoding="utf-8").splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("kind") in ACTION_KINDS:
+                actions += 1
+                if str(event.get("ref", "")).startswith(("issue-", "disc-")):
+                    conversation_actions += 1
+    actionable_total = sum(by_repo.values())
+    # An action should transition its item out of the candidate state. Adding
+    # remaining + completed therefore estimates the queue available this run,
+    # and avoids demanding 20 actions when only (say) three items existed.
+    required_actions = min(work_budget_floor(config_path), actionable_total + actions)
+    actionable_conversations = sum(conversation_by_repo.values())
+    required_conversation_actions = min(
+        conversation_budget_floor(config_path),
+        actionable_conversations + conversation_actions,
+    )
+    budget_short = bool(by_repo and actions < required_actions)
+    conversation_short = bool(
+        conversation_by_repo and conversation_actions < required_conversation_actions
+    )
+    return {
+        "actionable_total": actionable_total,
+        "actionable_by_repo": by_repo,
+        "queue_actions": actions,
+        "required_actions": required_actions,
+        "actionable_conversations": actionable_conversations,
+        "conversation_by_repo": conversation_by_repo,
+        "conversation_actions": conversation_actions,
+        "required_conversation_actions": required_conversation_actions,
+        "sync_only_failure": bool(by_repo and actions == 0),
+        "under_budget_failure": budget_short or conversation_short,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="command", required=True)
+    repair = sub.add_parser("repair")
+    repair.add_argument("--before", type=Path, required=True)
+    repair.add_argument("--state", type=Path, required=True)
+    recover = sub.add_parser("recover")
+    recover.add_argument("--state", type=Path, required=True)
+    recover.add_argument("--audit", type=Path, required=True)
+    check = sub.add_parser("check")
+    check.add_argument("--state", type=Path, required=True)
+    check.add_argument("--config", type=Path, required=True)
+    check.add_argument("--activity", type=Path, required=True)
+    check.add_argument("--now", required=True)
+    args = parser.parse_args()
+
+    if args.command == "repair":
+        result = repair_ledgers(args.before, args.state)
+    elif args.command == "recover":
+        result = recover_from_audit(args.state, args.audit)
+    else:
+        result = check_tick(args.state, args.config, args.activity, args.now)
+    print(json.dumps(result, separators=(",", ":")))
+
+
+if __name__ == "__main__":
+    main()

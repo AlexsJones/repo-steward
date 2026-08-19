@@ -7,7 +7,8 @@
 #   STEWARD_MODEL       optional model override
 # Exit codes: 0 = complete; 75 = stopped on a GitHub API escalation;
 #   76 = ended early, one or more chunks (repo ledgers / metrics / dashboard)
-#   never written; anything else is the engine's own exit status.
+#   never written; 77 = queue or conversation action budget was underused;
+#   anything else is the engine's own exit status.
 set -uo pipefail
 STEWARD_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$STEWARD_HOME"
@@ -18,7 +19,17 @@ START_EPOCH="$(date +%s)"
 ENGINE="${STEWARD_ENGINE:-claude}"
 BIN="${STEWARD_ENGINE_BIN:-${CLAUDE_BIN:-claude}}"
 MODEL="${STEWARD_MODEL:-}"
-export PROMPT="Read $STEWARD_HOME/STEWARD.md and execute one steward tick, following it exactly."
+export STEWARD_RUNNING_TICK=1
+export STEWARD_TICK_LAUNCHER_PID="$$"
+export PROMPT="You are the sole worker inside an already-started Repo Steward tick. The running repo-steward.service, tick.sh, and parent PID $STEWARD_TICK_LAUNCHER_PID are YOUR OWN launcher, never a competing tick: do not inspect, monitor, wait for, restart, or invoke them. Begin the tick work directly. Read $STEWARD_HOME/STEWARD.md and execute its sequence exactly. Sync is not completion: tick.sh mechanically rejects the run if in-scope queue work remains and the smaller configured substantive/light budget has not been spent on staged, posted, labeled, fix-PR, merged, or escalated actions. When actionable issues/discussions exist it also requires the configured conversation-action minimum before PR work can consume the budget. Preserve every existing ledger item's workflow fields when refreshing GitHub facts, then spend the configured work budget."
+
+# Keep a private pre-sync copy. The agent may refresh GitHub facts, but a
+# generated jq merge must never erase durable workflow history.
+STATE_BEFORE="$(mktemp -d)"
+trap 'rm -rf -- "$STATE_BEFORE"' EXIT
+if [[ -d state ]]; then
+  cp -a state/. "$STATE_BEFORE/"
+fi
 
 # Fresh progress feed for this tick (the dashboard polls /api/progress).
 printf '{"ts":"%s","phase":"start","msg":"tick started"}\n' "$TS" > progress.jsonl
@@ -113,6 +124,28 @@ case "$ENGINE" in
     ;;
 esac
 
+# Repair the recognizable destructive-sync shape (an existing acted-on item
+# rebuilt as a blank backlog record), while retaining newly fetched GitHub
+# fields. This is deliberately mechanical and runs before completion checks.
+GUARD_REPAIR="$(python3 tick_guard.py repair --before "$STATE_BEFORE" --state state 2>>logs/tick.log)"
+if [[ -n "$GUARD_REPAIR" ]]; then
+  echo "=== tick $TS ledger guard: $GUARD_REPAIR ===" >> logs/tick.log
+  REPAIRED_COUNT="$(jq -r '.repaired_items | length' <<<"$GUARD_REPAIR" 2>/dev/null || echo 0)"
+  if (( REPAIRED_COUNT > 0 )); then
+    jq -cn --arg ts "$TS" --argjson count "$REPAIRED_COUNT" \
+      '{v:1,ts:$ts,actor:"system",via:"tick",event:"ledger_guard_repair",ok:true,
+        summary:("preserved workflow history for " + ($count|tostring) + " destructively reset ledger item(s)"),
+        data:{repaired_items:$count}}' >> audit.jsonl
+  fi
+fi
+
+# The agent owns operational judgement, not frontend generation. Render from
+# the repaired ledgers and audit trail so every tick produces valid, stable DOM.
+if ! python3 render_dashboard.py 2>>logs/tick.log; then
+  echo "=== tick $TS deterministic dashboard render failed ===" >> logs/tick.log
+  (( RC == 0 )) && RC=78
+fi
+
 # Agents sometimes report an API stop as a successful conversational
 # completion. The activity feed is the durable evidence of that operational
 # failure, so never let it become a green tick in the dashboard/audit trail.
@@ -151,6 +184,37 @@ if (( ${#MISSING[@]} > 0 )); then
       summary:("tick ended early — chunks never written: " + $chunks),
       data:{missing_chunks:($chunks | split(" "))}}' >> audit.jsonl
   (( RC == 0 )) && RC=76
+fi
+
+# Artifact writes prove that sync reached every repository, but do not prove
+# that the steward did its job. Refuse a green sync-only tick when the ledger
+# still contains in-scope backlog or a conversation updated after our action.
+GUARD_CHECK="$(python3 tick_guard.py check --state state --config config.yaml \
+  --activity activity.jsonl --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 2>>logs/tick.log)"
+if [[ -n "$GUARD_CHECK" ]]; then
+  echo "=== tick $TS queue guard: $GUARD_CHECK ===" >> logs/tick.log
+fi
+if [[ "$(jq -r '.under_budget_failure // false' <<<"$GUARD_CHECK" 2>/dev/null)" == "true" ]]; then
+  ACTIONABLE="$(jq -r '.actionable_total' <<<"$GUARD_CHECK")"
+  ACTIONS="$(jq -r '.queue_actions' <<<"$GUARD_CHECK")"
+  REQUIRED="$(jq -r '.required_actions' <<<"$GUARD_CHECK")"
+  CONVERSATION_ACTIONS="$(jq -r '.conversation_actions' <<<"$GUARD_CHECK")"
+  REQUIRED_CONVERSATIONS="$(jq -r '.required_conversation_actions' <<<"$GUARD_CHECK")"
+  REPOS="$(jq -r '.actionable_by_repo | to_entries | map("\(.key)=\(.value)") | join(" ")' <<<"$GUARD_CHECK")"
+  printf '{"ts":"%s","phase":"incomplete","msg":"queue budget underused (%s/%s actions, %s/%s conversations); %s actionable item(s) remain: %s"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ACTIONS" "$REQUIRED" \
+    "$CONVERSATION_ACTIONS" "$REQUIRED_CONVERSATIONS" "$ACTIONABLE" "$REPOS" >> progress.jsonl
+  jq -cn --arg ts "$TS" --argjson actionable "$ACTIONABLE" --argjson actions "$ACTIONS" \
+    --argjson required "$REQUIRED" --argjson conversation_actions "$CONVERSATION_ACTIONS" \
+    --argjson required_conversations "$REQUIRED_CONVERSATIONS" --arg repos "$REPOS" \
+    '{v:1,actor:"system",via:"tick",event:"tick_incomplete",ok:false,
+      summary:("queue budget underused (" + ($actions|tostring) + "/" + ($required|tostring) +
+        " actions, " + ($conversation_actions|tostring) + "/" + ($required_conversations|tostring) +
+        " conversations); " + ($actionable|tostring) + " actionable item(s) remain"),
+      data:{reason:"queue_budget_underused",actions:$actions,required:$required,
+        conversation_actions:$conversation_actions,required_conversations:$required_conversations,
+        actionable:$actionable,repositories:$repos}}' >> audit.jsonl
+  (( RC == 0 )) && RC=77
 fi
 
 # Record real per-chunk completion offsets (seconds from tick start, from file

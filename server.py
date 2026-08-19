@@ -40,6 +40,7 @@ import os
 import re
 import subprocess
 import time
+from datetime import datetime, timedelta, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -340,9 +341,45 @@ def merge_pr(full_repo, number):
     """Merge a PR on the maintainer's behalf — only ever called from their
     explicit dashboard approval of an approve-recommend item."""
     flag = merge_method_flag(full_repo)
+
+    # `gh pr merge` describes a strict branch-protection refusal as a conflict
+    # in some versions.  Check GitHub's structured merge state *before* using
+    # that wording to decide that a contributor must resolve a real conflict.
+    # Updating remains part of this explicit maintainer-approved merge action;
+    # it is never performed by a background tick.
+    st_ok, st = run_gh(["pr", "view", str(number), "-R", full_repo,
+                        "--json", "mergeStateStatus", "--jq", ".mergeStateStatus"])
+
+    def queue_after_update(steps):
+        ok, out = run_gh(["pr", "merge", str(number), "-R", full_repo,
+                          flag, "--auto"])
+        if ok:
+            return True, f"merge {flag}: " + "; ".join(steps + ["auto-merge queued"])
+        return False, f"merge {flag}: " + "; ".join(
+            steps + [f"auto-merge failed: {out[:200]}"])
+
+    def update_then_queue():
+        upd_ok, upd_out = run_gh(["api", "-X", "PUT",
+                                  f"repos/{full_repo}/pulls/{number}/update-branch"])
+        if not upd_ok:
+            return False, f"merge {flag}: head behind base; update-branch failed: {upd_out[:200]}"
+        return queue_after_update(["branch updated"])
+
+    if st_ok and st == "BEHIND":
+        return update_then_queue()
+
     ok, out = run_gh(["pr", "merge", str(number), "-R", full_repo, flag])
     if ok:
         return True, f"merge {flag}: {(out or 'merged')[:200]}"
+
+    # The base may have moved between the preflight query and merge request.
+    # Recheck the structured state before interpreting gh's human text.
+    if not st_ok or st != "BEHIND":
+        st_ok, st = run_gh(["pr", "view", str(number), "-R", full_repo,
+                            "--json", "mergeStateStatus", "--jq", ".mergeStateStatus"])
+    if st_ok and st == "BEHIND":
+        return update_then_queue()
+
     if "merge commit cannot be cleanly created" in out or "not mergeable" in out:
         # The head conflicts with base (mergeStateStatus DIRTY). gh's stderr
         # suggests --auto, but auto-merge only waits out unmet requirements —
@@ -365,23 +402,103 @@ def merge_pr(full_repo, number):
                  or ("Required status check" in out and "is expected" in out))
     if not retriable:
         return False, f"merge {flag}: {out[:200]}"
-    # Branch protection blocks a direct merge: the head is stale against base
-    # and/or required checks haven't reported for it. Refresh the head if it's
-    # behind, then queue auto-merge so GitHub completes the merge once the
-    # requirements are met.
-    steps = []
-    st_ok, st = run_gh(["pr", "view", str(number), "-R", full_repo,
-                        "--json", "mergeStateStatus", "--jq", ".mergeStateStatus"])
-    if st_ok and st == "BEHIND":
-        upd_ok, upd_out = run_gh(["api", "-X", "PUT",
-                                  f"repos/{full_repo}/pulls/{number}/update-branch"])
-        if not upd_ok:
-            return False, f"merge {flag}: head behind base; update-branch failed: {upd_out[:200]}"
-        steps.append("branch updated")
-    ok, out = run_gh(["pr", "merge", str(number), "-R", full_repo, flag, "--auto"])
-    if ok:
-        return True, f"merge {flag}: " + "; ".join(steps + ["auto-merge queued"])
-    return False, f"merge {flag}: " + "; ".join(steps + [f"auto-merge failed: {out[:200]}"])
+    # Required checks may simply still be reporting. Queue auto-merge; this
+    # does not fabricate a passing status or bypass branch protection.
+    return queue_after_update([])
+
+
+def auto_merge_days():
+    match = re.search(r"^\s*auto_merge_after_days:\s*(\d+)",
+                      (ROOT / "config.yaml").read_text(), re.M)
+    return int(match.group(1)) if match else 0
+
+
+def auto_merge_candidate(item, pr, days, now=None):
+    """Pure eligibility check; GitHub facts are supplied by the caller."""
+    if days <= 0:
+        return False, "background auto-merge is disabled"
+    if item.get("status") != "ready-for-maintainer" or item.get("verdict") != "approve-recommend":
+        return False, "ledger item is not a steward approve-recommend"
+    if item.get("iterations", 0) != 0:
+        return False, "contributor pushed after the steward review"
+    if pr.get("state") != "OPEN":
+        return False, f"PR is {pr.get('state', 'not open')}"
+    if pr.get("mergeStateStatus") in ("BEHIND", "DIRTY"):
+        return False, f"PR merge state is {pr['mergeStateStatus']}"
+    head = pr.get("headRefOid")
+    if not head:
+        return False, "GitHub did not return the current head"
+    if item.get("head_oid") and item["head_oid"] != head:
+        return False, "ledger head does not match GitHub"
+
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+    matching = []
+    for review in pr.get("reviews") or []:
+        commit = review.get("commit") or {}
+        submitted = review.get("submittedAt")
+        if review.get("state") != "APPROVED" or commit.get("oid") != head or not submitted:
+            continue
+        try:
+            when = datetime.fromisoformat(submitted.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if when <= cutoff:
+            matching.append(when)
+    if not matching:
+        return False, f"no approval at the current head is at least {days} day(s) old"
+    return True, "eligible"
+
+
+def steward_approval_recorded(short, ref):
+    """The ledger alone is mutable; require matching durable tick evidence."""
+    path = ROOT / "audit.jsonl"
+    if not path.exists():
+        return False
+    for line in reversed(path.read_text().splitlines()):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("event") != "steward_action" or event.get("repo") != short or event.get("ref") != ref:
+            continue
+        if event.get("kind") == "posted" and re.search(
+                r"approv|ready for your final look", event.get("summary", ""), re.I):
+            return True
+    return False
+
+
+def authorize_tick_auto_merge(full_repo, number):
+    if steward_mode() != "live":
+        return False, "background auto-merge requires live mode"
+    short = full_repo.split("/")[-1]
+    if repo_map().get(short) != full_repo:
+        return False, "repository is not configured"
+    ref = f"pr-{number}"
+    ledger_path = ROOT / "state" / f"{short}.json"
+    if not ledger_path.exists():
+        return False, "repository ledger is missing"
+    item = json.loads(ledger_path.read_text()).get("items", {}).get(ref)
+    if not item:
+        return False, "PR is not in the repository ledger"
+    if not steward_approval_recorded(short, ref):
+        return False, "no durable steward approval event exists"
+    ok, out = run_gh(["pr", "view", str(number), "-R", full_repo,
+                      "--json", "state,headRefOid,mergeStateStatus,reviews"])
+    if not ok:
+        return False, f"could not verify PR: {out[:200]}"
+    try:
+        pr = json.loads(out)
+    except json.JSONDecodeError:
+        return False, "GitHub returned invalid PR data"
+    return auto_merge_candidate(item, pr, auto_merge_days())
+
+
+def merge_pr_background(full_repo, number):
+    """Merge without update-branch or queued auto-merge side effects."""
+    flag = merge_method_flag(full_repo)
+    ok, out = run_gh(["pr", "merge", str(number), "-R", full_repo, flag])
+    return ok, f"background merge {flag}: {(out or 'merged')[:200]}"
 
 
 def tick_elapsed_sec():
@@ -828,15 +945,25 @@ class Handler(SimpleHTTPRequestHandler):
             # (guardrail 1 stays mechanical), so an explicit merge/close typed
             # by the maintainer is carried out HERE, under their auth — and
             # only while a decision executor is actually running.
-            if not decide_active():
-                return self._json(403, {"error": "terminal actions are only served while the decision executor runs"})
             action = req.get("action")
             full = req.get("repo", "")
             kind = req.get("kind", "pr")
             num = str(req.get("number", ""))
             if action not in ("merge", "close") or "/" not in full or not num.isdigit():
                 return self._json(400, {"error": "need action merge|close, repo owner/name, numeric number"})
-            if action == "merge":
+            decision_terminal = decide_active()
+            tick_auto_merge = (
+                not decision_terminal and tick_active() and action == "merge" and kind == "pr"
+                and (req.get("reason") or "").startswith("auto-merge: steward approved ")
+            )
+            if not decision_terminal and not tick_auto_merge:
+                return self._json(403, {"error": "terminal action is not an active decision or verified tick auto-merge"})
+            if tick_auto_merge:
+                eligible, why = authorize_tick_auto_merge(full, num)
+                if not eligible:
+                    return self._json(403, {"error": f"auto-merge refused: {why}"})
+                ok, detail = merge_pr_background(full, num)
+            elif action == "merge":
                 if kind != "pr":
                     return self._json(400, {"error": "only PRs can merge"})
                 ok, detail = merge_pr(full, num)
@@ -850,15 +977,17 @@ class Handler(SimpleHTTPRequestHandler):
             reason = (req.get("reason") or "").strip()
             with open(ROOT / "approvals.jsonl", "a") as f:
                 f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                                    "repo": full, "action": f"decision-{action}",
+                                    "repo": full, "action": ("tick-auto-merge" if tick_auto_merge else f"decision-{action}"),
                                     "item": f"{kind}-{num}", "ok": ok, "detail": detail[:300],
                                     "reason": reason[:300]}) + "\n")
-            audit.append("terminal", "maintainer", "decide",
+            audit.append("terminal", "steward" if tick_auto_merge else "maintainer",
+                         "tick" if tick_auto_merge else "decide",
                          repo=full.split("/")[1], ref=f"{kind}-{num}",
                          ok=ok, detail=detail,
-                         summary=f"maintainer decision: {action} {kind} #{num}"
+                         summary=(("steward auto-merge: " if tick_auto_merge else "maintainer decision: ")
+                                  + f"{action} {kind} #{num}")
                                  + (f" — {reason}" if reason else ""),
-                         data={"action": action})
+                         data={"action": action, "auto_merge": tick_auto_merge})
             return self._json(200 if ok else 502, {"ok": ok, "detail": detail})
 
         if self.path == "/api/mode":

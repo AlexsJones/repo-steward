@@ -9,7 +9,7 @@ DASH   := repo-steward-dash.service
 UPTIME := repo-steward-uptime.timer
 
 .DEFAULT_GOAL := help
-.PHONY: help install serve start stop restart tick timer-on timer-off status logs open audit audit-backfill uninstall
+.PHONY: help install serve start stop restart tick timer-on timer-off status logs open audit audit-backfill test uninstall
 
 help: ## List targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -59,6 +59,9 @@ audit: ## Show the last 25 decision-log events
 
 audit-backfill: ## Fold pre-existing history (approvals/decisions/usage) into the decision log
 	python3 audit.py backfill
+
+test: ## Run the deterministic runner/ledger tests
+	python3 -m unittest -v test_tick_guard.py
 
 uninstall: ## Disable and stop every steward unit
 	-$(SC) disable --now $(TIMER) $(DASH) $(UPTIME) $(SVC)

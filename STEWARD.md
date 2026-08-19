@@ -4,6 +4,11 @@ You are running one autonomous steward tick for the maintainer's open-source
 repos. The steward home is the directory containing this file; every path
 below is relative to it. Read `config.yaml` first; it controls mode
 (draft/live), the repo list, per-tick limits, and the comment signature.
+`tick.sh` has already started this worker: the running `repo-steward.service`,
+its `tick.sh` process, and `$STEWARD_TICK_LAUNCHER_PID` are this session's own
+parent launcher, not another tick. **Never inspect, monitor, wait for, restart,
+or invoke them.** Start at step 0 below and perform the work directly. A real
+competing tick is excluded by systemd before this worker is launched.
 If `VOICE.md` exists, read it before drafting any outbound text (issue
 replies, reviews, discussion replies, escalation comment bodies) — every
 draft, staged or live, must follow it. If absent, a neutral helpful tone is
@@ -250,6 +255,13 @@ Order candidate work (highest first):
 5. Stale items (no movement > 21 days, but inside the floor): draft a nudge, or
    propose close as an escalation (closing is the maintainer's call).
 
+**Conversation floor.** When actionable issues or discussions exist, at least
+`limits.min_conversation_actions_per_tick` actions must be issue/discussion
+replies, triage, labels, fix PRs tied to an issue, or escalations tied to that
+thread. Do this before spending the rest of the budget on PR reviews. This
+prevents a large dependency-PR queue from indefinitely starving contributor
+questions and follow-up comments. `0` disables the conversation floor.
+
 **Spend the budget — the queue is the whole ledger, not the cursor diff.** The
 sync in step 1 tells you what *changed*; it does not tell you what is *owed*.
 Rules 1–3 usually drain in minutes because they only see new inflow, and a tick
@@ -331,7 +343,13 @@ Append one line per repo to `metrics.jsonl`:
 ```
 
 ### 6. Refresh the dashboard
-Regenerate `dashboard.html` (same visual structure — edit data, keep design).
+Do **not** edit or regenerate `dashboard.html` yourself. `tick.sh` runs
+`render_dashboard.py` after your session, using the repaired ledgers and audit
+events as the source of truth. Your responsibility is to finish writing those
+inputs accurately. The deterministic renderer owns the page structure and
+prevents generated markup from breaking the dashboard controls.
+
+The renderer preserves the visual structure and requirements below.
 On the very first tick there is no `dashboard.html` to carry the design forward
 (it is gitignored, so a fresh clone has none): take the palette, typography, and
 header/`.statusline` structure from `dashboard-first-run.html` — the tracked
@@ -467,6 +485,11 @@ approve-recommend PR the click posts the review (if still unposted) AND merges
 the PR — the maintainer's final look is the terminal decision — setting the
 item to `done`; other approvals set the item's status to `posted`. On sync, treat `posted` items as live
 conversations: watch for replies/pushes and continue the normal iterate flow.
+When that explicit merge encounters a PR that GitHub reports as `BEHIND`, the
+server may call GitHub's update-branch endpoint for that PR and queue
+auto-merge after its checks rerun. Do not do this from a tick or retry it
+automatically: it writes to the contributor's branch and remains scoped to the
+maintainer's terminal merge decision.
 Never re-post a staged action whose entry has `executed_at` set. Staged
 actions must use the canonical schema: `{kind, staged_at, body, labels?}` with
 kind one of `pr_review_approve | pr_review_request_changes | pr_comment |
