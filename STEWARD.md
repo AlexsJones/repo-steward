@@ -295,12 +295,19 @@ prevent.
 choices from the Insights canvas into `proactive.json` before this session.
 Do not touch that queue until the operational and conversation requirements
 above have been satisfied for this tick. Then work at most
-`limits.proactive_items_per_tick` entries whose status is exactly `selected`
+`limits.proactive_items_per_tick` entries whose status is `selected` or
+`nominated`
 (absent defaults to `1`; `0` means none). This is a separate cap and proactive events never
 count toward the primary substantive/light guard. A selection authorizes
 investigation, documentation, or a steward-authored PR as recommended by the
 idea; it never authorizes merge, close, a roadmap commitment, or unrelated
-scope. Work oldest selection first, high-priority repositories first.
+scope. A `nominated` item is different: the maintainer has reviewed the local
+proposal and explicitly put its bounded implementation into the work queue.
+For nominated work, implement the proposal and open a PR; do not substitute
+another investigation or rewrite the proposal. If repository evidence makes
+the proposal unsafe or obsolete, mark it `blocked` with the concrete reason
+instead of widening scope. Work nominations before exploratory selections,
+then oldest selection first and high-priority repositories first.
 
 ### 3. Execute (within limits)
 Every drafted comment, review, and reply below follows `VOICE.md` — re-read
@@ -354,12 +361,13 @@ it now if you haven't this session.
    steward's own clones — never the maintainer's working copies), branch, fix,
    run the repo's own test suite, push, open PR referencing the issue. Cap per
    `max_fix_prs_open`.
-- **Selected proactive ideas**: re-check the cited evidence in
+- **Selected or nominated proactive ideas**: re-check the cited evidence in
   `proactive.json`, inspect the target repository, and choose the smallest
   action that tests the idea's premise. For investigation/design, write a
   concise local brief under `proposals/<repo-short>-<idea-key>.md`; set status
   `ready-for-maintainer` and store its path. For a well-supported small
-  implementation or documentation change, use a `steward/idea-<slug>` branch,
+  implementation or documentation change—and for every `nominated` item—use
+  a `steward/idea-<slug>` branch,
   run relevant tests, and open a PR explaining the evidence and verification;
   set status `pr-open` and store its URL. Set `in-progress` before starting,
   increment `attempts`, and record a real blocker rather than widening scope.

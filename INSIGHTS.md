@@ -69,4 +69,6 @@ analysis, while prior snapshots remain auditable elsewhere.
 
 Themes describe observed patterns. Ideas are possible responses, not roadmap
 commitments and not permission to implement anything. Phrase ideas so the
-maintainer can later select, defer, or dismiss them from the canvas.
+maintainer can select one for investigation, then—after reviewing any resulting
+proposal—separately nominate its bounded implementation, defer it, or dismiss
+it from the canvas.

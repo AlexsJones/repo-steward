@@ -281,8 +281,13 @@ view expands each repository into evidence-backed theme and potential-idea
 nodes. Selecting, deferring, or dismissing an idea records local maintainer
 intent in `insight-decisions.jsonl` and the unified audit log. A selected idea
 enters `proactive.json`; after the primary queue requirements are satisfied, a
-tick may investigate it, write a local proposal, or open a steward PR. Selection
-never authorizes a merge, close, or roadmap commitment.
+tick may investigate it, write a local proposal, or open a steward PR. When an
+investigation produces a proposal, the canvas exposes it as an explicit
+decision point: **Nominate for build** puts that bounded proposal back into the
+next eligible tick with implementation intent. The steward must then create a
+branch, run relevant tests, and open a PR rather than silently stopping at
+another analysis pass. Selection or nomination never authorizes a merge, close,
+or roadmap commitment.
 
 ### Steward self-evaluation
 

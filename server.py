@@ -9,7 +9,7 @@ Static file serving plus a minimal control API:
   GET  /api/signals?repo=&kind=&limit= -> normalized evidence for insights
   GET  /api/insights           -> current validated theme/idea graph + cited evidence
   GET  /api/evaluation         -> latest self-evaluation, lessons, and cited evidence
-  POST /api/insight-decision   -> {idea_id, action:select|defer|dismiss|reset, note?}
+  POST /api/insight-decision   -> {idea_id, action:select|nominate|defer|dismiss|reset, note?}
   POST /api/tick              -> start one steward tick (refused while one runs)
   POST /api/mode              -> {"mode": "draft"|"live"}  (rewrites config.yaml)
   POST /api/schedule          -> {"preset": "manual"|"hourly"|"6h"|"daily"|"weekly"}
@@ -142,6 +142,25 @@ def find_insight_idea(graph, idea_id):
             for idea in theme.get("ideas", []):
                 if idea.get("id") == idea_id:
                     return repo, theme, idea
+    return None
+
+
+def nomination_error(root, idea_id):
+    """Return why an idea cannot advance from proposal to implementation."""
+    queued = proactive.read_json(
+        root / "proactive.json", {"items": {}}).get("items", {}).get(idea_id)
+    if not queued or queued.get("status") != "ready-for-maintainer":
+        return "idea must complete investigation before it can be nominated for build"
+    proposal_path = queued.get("proposal_path")
+    if not isinstance(proposal_path, str) or not proposal_path.strip():
+        return "idea has no reviewable proposal to nominate"
+    try:
+        proposal = (root / proposal_path).resolve()
+        proposal.relative_to(root.resolve())
+    except (OSError, ValueError):
+        return "idea proposal path is invalid"
+    if not proposal.is_file():
+        return "idea has no reviewable proposal to nominate"
     return None
 
 
@@ -1082,8 +1101,9 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/insight-decision":
             idea_id = (req.get("idea_id") or "").strip()
             action = req.get("action")
-            if action not in {"select", "defer", "dismiss", "reset"}:
-                return self._json(400, {"error": "action must be select, defer, dismiss, or reset"})
+            if action not in {"select", "nominate", "defer", "dismiss", "reset"}:
+                return self._json(400, {"error":
+                    "action must be select, nominate, defer, dismiss, or reset"})
             graph_path = ROOT / "insights.json"
             try:
                 graph = json.loads(graph_path.read_text(encoding="utf-8"))
@@ -1093,6 +1113,10 @@ class Handler(SimpleHTTPRequestHandler):
             if not found:
                 return self._json(404, {"error": "idea is not in the current insight graph"})
             repo, theme, idea = found
+            if action == "nominate":
+                error = nomination_error(ROOT, idea_id)
+                if error:
+                    return self._json(409, {"error": error})
             entry = {
                 "v": 1,
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

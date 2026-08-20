@@ -72,23 +72,27 @@ def sync(root: Path = ROOT, now: str | None = None) -> dict:
         action = decision.get("action")
         existing = items.get(idea_id)
         idea = ideas.get(idea_id)
-        if action == "select" and idea:
+        if action in {"select", "nominate"} and idea:
+            target_status = "nominated" if action == "nominate" else "selected"
             if not existing:
                 existing = {
-                    "id": idea_id, "status": "selected", "selected_at": decision.get("ts"),
+                    "id": idea_id, "status": target_status, "selected_at": decision.get("ts"),
                     "last_control_at": decision.get("ts"), "attempts": 0,
                 }
                 items[idea_id] = existing
                 changed += 1
             elif str(existing.get("last_control_at") or "") < str(decision.get("ts") or ""):
                 if existing.get("status") not in {"in-progress", "pr-open", "done"}:
-                    existing["status"] = "selected"
+                    existing["status"] = target_status
                 existing["last_control_at"] = decision.get("ts")
                 changed += 1
             for key in ("repo", "theme_id", "theme", "title", "problem", "rationale",
                         "scope", "risk", "suggested_next_action", "signal_ids"):
                 existing[key] = idea.get(key)
             existing["selection_note"] = decision.get("note", "")
+            existing["execution_intent"] = "implement" if action == "nominate" else "explore"
+            if action == "nominate":
+                existing["nominated_at"] = decision.get("ts")
         elif existing and str(existing.get("last_control_at") or "") < str(decision.get("ts") or ""):
             if existing.get("status") not in TERMINAL or action == "dismiss":
                 existing["status"] = {"defer": "deferred", "dismiss": "dismissed",
@@ -98,7 +102,7 @@ def sync(root: Path = ROOT, now: str | None = None) -> dict:
             changed += 1
 
     for idea_id, item in items.items():
-        if idea_id not in ideas and item.get("status") == "selected":
+        if idea_id not in ideas and item.get("status") in {"selected", "nominated"}:
             item["status"] = "superseded"
             item["notes"] = "idea is absent from the latest validated insight graph"
             changed += 1
@@ -108,6 +112,7 @@ def sync(root: Path = ROOT, now: str | None = None) -> dict:
     write_json(path, queue)
     return {"items": len(items),
             "selected": sum(item.get("status") == "selected" for item in items.values()),
+            "nominated": sum(item.get("status") == "nominated" for item in items.values()),
             "changed": changed, "path": str(path)}
 
 

@@ -10,7 +10,7 @@ from pathlib import Path
 from tick_guard import (check_review_integrity, check_tick, recover_from_audit,
                         repair_ledgers, review_record_errors)
 from server import (auto_merge_candidate, find_insight_idea, insight_decisions,
-                    prepare_review_record)
+                    nomination_error, prepare_review_record)
 from render_dashboard import render
 from signals import (collect as collect_signals, item_signal,
                      query as query_signals)
@@ -211,6 +211,40 @@ class TickGuardTest(unittest.TestCase):
             self.assertEqual("deferred", queue["items"][idea["id"]]["status"])
             self.assertEqual("next release", queue["items"][idea["id"]]["control_note"])
 
+    def test_completed_insight_can_be_nominated_for_implementation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            idea_id = "idea:owner/repo:one"
+            idea = {"id": idea_id, "title": "One", "problem": "P",
+                    "rationale": "R", "scope": "small", "risk": "low",
+                    "suggested_next_action": "investigate", "signal_ids": ["sig_1"]}
+            write(root / "insights.json", {"repositories": [{"name": "owner/repo",
+                  "themes": [{"id": "theme:owner/repo:a", "title": "A",
+                              "ideas": [idea]}]}]})
+            (root / "proposals").mkdir()
+            (root / "proposals" / "one.md").write_text("# Proposal\n")
+            write(root / "proactive.json", {"v": 1, "items": {idea_id: {
+                "id": idea_id, "status": "ready-for-maintainer", "attempts": 1,
+                "last_control_at": "2026-08-20T01:00:00Z",
+                "proposal_path": "proposals/one.md"}}})
+            self.assertIsNone(nomination_error(root, idea_id))
+            (root / "insight-decisions.jsonl").write_text(json.dumps({
+                "idea_id": idea_id, "action": "nominate",
+                "ts": "2026-08-20T02:00:00Z"}) + "\n")
+            result = sync_proactive(root, "2026-08-20T02:01:00Z")
+            queue = json.loads((root / "proactive.json").read_text())["items"][idea_id]
+            self.assertEqual(1, result["nominated"])
+            self.assertEqual("nominated", queue["status"])
+            self.assertEqual("implement", queue["execution_intent"])
+            self.assertEqual("proposals/one.md", queue["proposal_path"])
+
+    def test_nomination_requires_a_local_proposal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write(root / "proactive.json", {"items": {"idea:one": {
+                "status": "ready-for-maintainer", "proposal_path": "proposals/missing.md"}}})
+            self.assertIn("no reviewable proposal", nomination_error(root, "idea:one"))
+
     def test_selected_idea_missing_from_new_graph_is_superseded(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -255,6 +289,9 @@ class TickGuardTest(unittest.TestCase):
         self.assertIn("/api/insight-decision", page)
         self.assertIn("repository → theme → potential idea", page)
         self.assertIn('data-action="select"', page)
+        self.assertIn('data-action="nominate"', page)
+        self.assertIn("Investigation complete — your next decision", page)
+        self.assertIn("Nominate for build", page)
 
     def test_insight_validation_builds_stable_nodes_from_real_evidence(self):
         records = []
