@@ -320,11 +320,13 @@
   function init(initial) {
   var header = document.querySelector('header');
   var statusline = document.querySelector('.statusline');
+  var headerActions = document.createElement('div');
+  headerActions.className = 'header-actions';
+  header.insertBefore(headerActions, statusline);
 
-  // Layout: controls (mode toggle + run button) sit on the title row, top
-  // right; the chip row gets the full width below and never mixes with them.
-  statusline.style.flexBasis = '100%';
-  statusline.style.marginLeft = '0';
+  // The dashboard header owns three explicit regions: primary navigation,
+  // operational actions, and a quieter status row. Keeping controls in one
+  // container prevents runtime-injected buttons from forcing extra rows.
 
   // Themed confirm modal (replaces window.confirm). Returns a Promise<bool>.
   function modal(opts) {
@@ -359,15 +361,16 @@
 
   // Mode toggle: replaces any statically-rendered draft chip. Clicking flips
   // draft <-> live via /api/mode (config.yaml is the source of truth).
-  var stale = document.querySelector('.chip.draft');
+  var stale = document.querySelector('[data-mode-status], .chip.draft');
   if (stale) stale.remove();
   var modeChip = document.createElement('button');
-  header.insertBefore(modeChip, statusline);
+  headerActions.appendChild(modeChip);
   function paintMode(mode) {
     var draft = mode !== 'live';
-    modeChip.textContent = draft ? 'DRAFT — click to go live' : 'LIVE — click for draft';
+    modeChip.textContent = draft ? 'Draft mode' : 'Live mode';
+    modeChip.title = draft ? 'Draft mode — click to go live' : 'Live mode — click to switch to draft';
     modeChip.style.cssText = 'font:600 12px ui-monospace,Menlo,monospace;padding:9px 14px;' +
-      'border-radius:8px;border:none;cursor:pointer;margin-left:10px;align-self:center;flex-shrink:0;' + (draft
+      'border-radius:8px;border:none;cursor:pointer;align-self:center;flex-shrink:0;' + (draft
       ? 'background:var(--warn-soft);color:var(--warn);'
       : 'background:var(--ok-soft);color:var(--ok);');
     modeChip.dataset.mode = draft ? 'draft' : 'live';
@@ -480,7 +483,7 @@
   // ⚙ Settings: schedule (applies immediately), tick size + watched repos
   // (one Save, applies from the next tick).
   var settingsBtn = navBtn('⚙ Settings', 'Schedule, tick size, and what the steward watches');
-  header.insertBefore(settingsBtn, statusline);
+  headerActions.appendChild(settingsBtn);
   var spop = makePanel('460px');
 
   var sched = document.createElement('select');
@@ -607,38 +610,16 @@
     });
   });
 
-  // 📋 Audit: the decision log has its own page (audit.html, like metrics),
-  // with filters and download — the header just links to it.
-  var auditLink = document.createElement('a');
-  auditLink.textContent = '📋 Audit';
-  auditLink.href = 'audit.html';
-  auditLink.title = 'The decision log — everything decided and done, by whom; downloadable';
-  auditLink.style.cssText = 'font:600 12px ui-monospace,Menlo,monospace;padding:8px 13px;border-radius:8px;' +
-    'border:1px solid var(--accent);background:transparent;color:var(--accent);text-decoration:none;' +
-    'align-self:center;flex-shrink:0;margin-left:10px;';
-  header.insertBefore(auditLink, modeChip);
-
   // The primary action: solid button, doubling as tick status indicator.
   var btn = document.createElement('button');
   var btnBase = 'font:600 14px system-ui,-apple-system,sans-serif;padding:10px 20px;' +
-    'border-radius:8px;border:none;letter-spacing:.01em;margin-left:10px;align-self:center;flex-shrink:0;';
+    'border-radius:8px;border:none;letter-spacing:.01em;align-self:center;flex-shrink:0;';
   function styleBtn(busy) {
     btn.style.cssText = btnBase + (busy
       ? 'background:var(--warn-soft);color:var(--warn);cursor:default;'
       : 'background:var(--accent);color:var(--panel);cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.25);');
   }
-  header.insertBefore(btn, statusline);
-
-  // Relocate the "metrics →" link from the chip row up into the control
-  // cluster, styled as a distinct outlined nav item (not another action).
-  var metricsLink = document.querySelector('.statusline a[href$="metrics.html"]');
-  if (metricsLink) {
-    metricsLink.textContent = '📊 Metrics';
-    metricsLink.style.cssText = 'font:600 12px ui-monospace,Menlo,monospace;padding:8px 13px;border-radius:8px;' +
-      'border:1px solid var(--accent);background:transparent;color:var(--accent);text-decoration:none;' +
-      'margin-left:auto;align-self:center;flex-shrink:0;';
-    header.insertBefore(metricsLink, auditLink);
-  }
+  headerActions.appendChild(btn);
 
   // Progress strip below the header: appears only while a tick runs.
   var strip = document.createElement('div');

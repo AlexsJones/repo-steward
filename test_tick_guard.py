@@ -568,7 +568,15 @@ class TickGuardTest(unittest.TestCase):
             self.assertIn('href="/evaluation.html"', page)
             self.assertIn('href="/audit.html"', page)
             self.assertIn('aria-current="page">Operations', page)
+            self.assertIn('class="site-header dashboard-header"', page)
+            self.assertIn('data-mode-status', page)
             self.assertNotIn('([.items[]', page)
+
+    def test_dashboard_controls_do_not_inject_duplicate_navigation(self):
+        source = Path(__file__).with_name("steward-controls.js").read_text(encoding="utf-8")
+        self.assertIn("headerActions.className = 'header-actions'", source)
+        self.assertNotIn("var auditLink =", source)
+        self.assertNotIn("var metricsLink =", source)
 
 
 if __name__ == "__main__":
