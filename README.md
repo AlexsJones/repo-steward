@@ -258,6 +258,47 @@ duplicates an event).
   snapshots, plus a Δ-since-baseline table, so you can see which repos are
   heating up and whether the backlog is actually shrinking.
 
+### Repository insights
+
+Every operational tick snapshots changed ledger items, metrics, and audit
+events into `signals.jsonl`. The source evidence stays separate from the
+steward's bounded analysis, and stable `repo:owner/name` identities make the
+records suitable for a graph-style dashboard.
+
+Run `make insights` to start a separate, read-only insight sweep. It makes no
+GitHub calls or queue changes. The sweep groups recurring themes and suggests
+potential investments, then `insights.py` rejects any result that cites an
+unknown signal, crosses repository evidence, or claims recurrence without
+enough distinct items. Valid output is published atomically to `insights.json`
+and served at `GET /api/insights`. Insight scheduling remains manual until it
+is exposed as an explicit dashboard setting.
+Sweeps time out after ten minutes by default so a stalled model preserves the
+last published graph; override with `STEWARD_INSIGHTS_TIMEOUT_SEC` when running
+`make insights` if needed.
+
+Open **http://localhost:8377/insights.html** for the graph workspace. Its fleet
+view expands each repository into evidence-backed theme and potential-idea
+nodes. Selecting, deferring, or dismissing an idea records local maintainer
+intent in `insight-decisions.jsonl` and the unified audit log. A selected idea
+enters `proactive.json`; after the primary queue requirements are satisfied, a
+tick may investigate it, write a local proposal, or open a steward PR. Selection
+never authorizes a merge, close, or roadmap commitment.
+
+### Steward self-evaluation
+
+Run `make evaluate` to start a separate critical review of earlier steward
+judgments against later maintainer actions, contributor responses, and
+repository outcomes. It is read-only with respect to GitHub and the operational
+queue. Findings must cite the original steward event plus later evidence;
+silence is never treated as validation, and the steward's own approval is not
+independent review.
+
+Validated reports are retained in `evaluations.jsonl`, with the latest in
+`evaluation.json`. A bounded set of finding-backed, repository-specific lessons
+is written to `lessons.json` and read by future ticks as fallible guidance that
+cannot override current evidence or guardrails. View the dedicated section at
+**http://localhost:8377/evaluation.html**.
+
 ### Site uptime
 
 Add a `sites:` block to config.yaml (see the example) and the installer
@@ -291,7 +332,8 @@ claude -p "execute one steward tick"        spawns decide.sh when idle
         ├─ delta re-review PRs whose authors pushed since last review
         ├─ author fix PRs for confirmed bugs (own clones, tests included)
         ├─ escalate tie-breaks to escalations.md — never blocks on them
-        └─ write ledgers + metrics, regenerate dashboard.html
+        ├─ write ledgers + metrics, regenerate dashboard.html
+        └─ snapshot changed evidence into signals.jsonl for later insights
 ```
 
 There is no daemon and no database: continuity comes from plain JSON ledgers
@@ -334,7 +376,11 @@ running install generates is gitignored (per-maintainer state). The tracked set:
 | `tick.sh` | headless-agent wrapper each tick runs through; captures usage + chunk timings | yes |
 | `decide.sh` | the decision executor `server.py`/`tick.sh` spawn for typed decisions | yes |
 | `audit.py` | decision-log schema, append/read helpers, history backfill | yes |
-| `metrics.html` · `audit.html` | the metrics and decision-log pages — static, read live data from the API | yes |
+| `signals.py` | deterministic, deduplicating evidence collector for repository insights | yes |
+| `insights.py` · `INSIGHTS.md` · `insights.sh` | prepare, analyze, and validate the read-only insight graph | yes |
+| `proactive.py` | materializes selected canvas ideas into the subordinate work queue | yes |
+| `evaluation.py` · `EVALUATION.md` · `evaluate.sh` | critically compare prior judgments with later outcomes and derive lessons | yes |
+| `insights.html` · `evaluation.html` · `metrics.html` · `audit.html` | graph, self-evaluation, metrics, and decision-log pages | yes |
 | `uptime_check.py` | token-free site probe the uptime timer runs | yes |
 | `install.sh` | generates the systemd user units | yes |
 | `Makefile` | convenience verbs over the units — `make help` | yes |
@@ -354,6 +400,12 @@ Generated per install, never committed:
 | `approvals.jsonl` | audit trail of every action taken under your auth | no |
 | `audit.jsonl` · `activity.jsonl` | the unified decision log + the current run's slice of it | no |
 | `metrics.jsonl` · `usage.jsonl` · `timings.jsonl` | snapshots, token/cost envelopes, per-chunk tick timings | no |
+| `signals.jsonl` | append-only item, activity, and metric evidence with stable graph identities | no |
+| `insights-input.json` · `insights.candidate.json` · `insights.json` | bounded sweep context, untrusted candidate, and validated graph | no |
+| `insight-decisions.jsonl` | append-only maintainer posture on canvas idea nodes | no |
+| `proactive.json` · `proposals/` | selected-idea workflow state and local investigation briefs | no |
+| `evaluation-input.json` · `evaluation.candidate.json` · `evaluation.json` | bounded evaluation context, untrusted candidate, and validated report | no |
+| `evaluations.jsonl` · `lessons.json` | evaluation history and current evidence-backed tick guidance | no |
 | `logs/tick.log` · `logs/decide.log` | full output of every tick / decision run | no |
 
 ### Why not a general-purpose agent harness?

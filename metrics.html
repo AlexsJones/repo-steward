@@ -1,4 +1,5 @@
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Repo Steward — Metrics</title>
 <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
 <meta http-equiv="refresh" content="300">
@@ -69,11 +70,18 @@
   tbody tr:last-child td { border-bottom: none; }
   #tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--bg); font: 12px/1.5 ui-monospace, Menlo, monospace; padding: 6px 9px; border-radius: 6px; opacity: 0; transition: opacity .1s; z-index: 10; max-width: 280px; }
 </style>
+<link rel="stylesheet" href="/assets/site-nav.css">
 
 <main>
-  <header>
+  <header class="site-header">
     <h1>Steward Metrics</h1>
-    <a href="/dashboard.html">← dashboard</a>
+    <nav class="site-nav" aria-label="Primary navigation">
+      <a href="/dashboard.html">Operations</a>
+      <a href="/insights.html">Insights</a>
+      <a href="/evaluation.html">Self-evaluation</a>
+      <a href="/metrics.html" aria-current="page">Metrics</a>
+      <a href="/audit.html">Audit</a>
+    </nav>
   </header>
 
   <section>

@@ -208,13 +208,19 @@ def render(root: Path = ROOT, output: Path | None = None) -> str:
     parts = ["<!doctype html>", '<html lang="en"><head>', '<meta charset="utf-8">',
              '<meta http-equiv="refresh" content="300">', '<meta name="viewport" content="width=device-width,initial-scale=1">',
              '<title>Repo Steward</title>', '<link rel="icon" href="/assets/logo.svg" type="image/svg+xml">',
-             f"<style>{base_css}{EXTRA_CSS}</style>", "</head><body><main>",
-             '<header><h1>Repo Steward</h1><div class="statusline">',
+             f"<style>{base_css}{EXTRA_CSS}</style>",
+             '<link rel="stylesheet" href="/assets/site-nav.css">', "</head><body><main>",
+             '<header class="site-header"><h1>Repo Steward</h1><div class="statusline">',
              f'<span class="chip">{esc(current_mode)}</span>',
              f'<span class="chip">repos {len(repos)}</span>',
              f'<span class="chip">issues {open_issues}</span>', f'<span class="chip">PRs {open_prs}</span>',
              f'<span class="chip">last tick {esc(tick_label)}</span>', f'<span class="chip">staged {staged_count}</span>',
-             '<a href="/metrics.html">metrics →</a></div></header>']
+             '</div><nav class="site-nav" aria-label="Primary navigation">',
+             '<a href="/dashboard.html" aria-current="page">Operations</a>',
+             '<a href="/insights.html">Insights</a>',
+             '<a href="/evaluation.html">Self-evaluation</a>',
+             '<a href="/metrics.html">Metrics</a>',
+             '<a href="/audit.html">Audit</a></nav></header>']
 
     parts.append(f'<section><h2>Decisions needed <span class="count">· {len(decisions)}</span></h2>')
     if decisions:

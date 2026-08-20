@@ -26,8 +26,11 @@ WORKFLOW_FIELDS = (
     "notes",
     "approve_recommend_since",
     "head_oid",
+    "review_records",
 )
 ACTION_KINDS = {"staged", "posted", "labeled", "fix_pr", "escalated", "merged"}
+REVIEW_VERDICTS = {"approve-recommend", "iterate", "escalate"}
+REVIEW_STATES = {"reviewed", "iterating", "ready-for-maintainer", "escalated"}
 
 
 def read_json(path: Path) -> dict:
@@ -103,7 +106,8 @@ def repair_ledgers(before_dir: Path, state_dir: Path) -> dict:
 
             # Even legitimate transitions must not erase the durable record of
             # what happened previously.  Fresh non-null values always win.
-            for field in ("last_action", "last_action_at", "approve_recommend_since", "head_oid"):
+            for field in ("last_action", "last_action_at", "approve_recommend_since",
+                          "head_oid", "review_records"):
                 if item.get(field) is None and old.get(field) is not None:
                     item[field] = old[field]
                     preserved_fields += 1
@@ -111,6 +115,152 @@ def repair_ledgers(before_dir: Path, state_dir: Path) -> dict:
         if changed:
             write_json(current_path, current)
     return {"repaired_items": repaired_items, "preserved_fields": preserved_fields}
+
+
+def review_action_verdict(action: dict) -> str | None:
+    kind = action.get("kind")
+    if kind == "pr_review_approve":
+        return "approve-recommend"
+    if kind == "pr_review_request_changes":
+        return "iterate"
+    return None
+
+
+def review_record_errors(item: dict) -> list[str]:
+    """Validate the immutable evidence behind the current PR judgment."""
+    records = item.get("review_records")
+    record = records[-1] if isinstance(records, list) and records else None
+    if not isinstance(record, dict):
+        return ["missing review_records entry"]
+    errors = []
+    if record.get("v") != 1:
+        errors.append("review_record.v must be 1")
+    for field in ("id", "head_oid", "verdict", "body", "recorded_at", "review_basis"):
+        if not isinstance(record.get(field), str) or not record[field].strip():
+            errors.append(f"review_record.{field} is required")
+    if record.get("verdict") not in REVIEW_VERDICTS:
+        errors.append("review_record.verdict is invalid")
+    if item.get("head_oid") and record.get("head_oid") != item.get("head_oid"):
+        errors.append("review_record.head_oid does not match the current PR head")
+    if item.get("verdict") and record.get("verdict") != item.get("verdict"):
+        errors.append("review_record.verdict does not match the ledger verdict")
+    for field in ("claims", "risk_areas", "test_evidence"):
+        value = record.get(field)
+        if not isinstance(value, list) or any(not isinstance(v, str) or not v.strip()
+                                               for v in value):
+            errors.append(f"review_record.{field} must be a list of non-empty strings")
+    if isinstance(record.get("claims"), list) and not record["claims"]:
+        errors.append("review_record.claims must record at least one checked claim")
+    if isinstance(record.get("test_evidence"), list) and not record["test_evidence"]:
+        errors.append("review_record.test_evidence must state what was or was not run")
+
+    matching_actions = [
+        action for action in item.get("staged_actions") or []
+        if isinstance(action, dict) and review_action_verdict(action) == record.get("verdict")
+    ]
+    if matching_actions:
+        action = matching_actions[-1]
+        if action.get("body") != record.get("body"):
+            errors.append("staged review body differs from canonical review_record.body")
+        if action.get("review_record_id") != record.get("id"):
+            errors.append("staged review is not linked to the canonical review record")
+    return errors
+
+
+def _read_activity(path: Path) -> list[dict]:
+    events = []
+    if not path.exists():
+        return events
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def review_history_preserved(old_records, records) -> bool:
+    if not isinstance(old_records, list):
+        return True
+    if not isinstance(records, list) or len(records) < len(old_records):
+        return False
+    for old, current in zip(old_records, records):
+        if not isinstance(old, dict) or not isinstance(current, dict):
+            if old != current:
+                return False
+            continue
+        old_core = {k: v for k, v in old.items() if k != "posted_at"}
+        current_core = {k: v for k, v in current.items() if k != "posted_at"}
+        if old_core != current_core:
+            return False
+        old_posted, current_posted = old.get("posted_at"), current.get("posted_at")
+        if old_posted != current_posted and not (
+                old_posted is None and isinstance(current_posted, str) and current_posted.strip()):
+            return False
+    return True
+
+
+def check_review_integrity(before_dir: Path, state_dir: Path, activity_path: Path) -> dict:
+    """Reject new review judgments without evaluable local evidence.
+
+    Unchanged historical judgments are reported as legacy gaps, not failures.
+    This makes rollout safe while ensuring every judgment made from this tick
+    onward is reviewable by the evaluation loop.
+    """
+    events = _read_activity(activity_path)
+    acted_refs = {
+        (event.get("repo"), event.get("ref"))
+        for event in events
+        if event.get("kind") in {"staged", "posted", "escalated"}
+        and str(event.get("ref", "")).startswith("pr-")
+    }
+    posted_refs = {
+        (event.get("repo"), event.get("ref"))
+        for event in events
+        if event.get("kind") == "posted" and str(event.get("ref", "")).startswith("pr-")
+    }
+    violations = []
+    legacy_missing = []
+    checked = []
+    for current_path in sorted(state_dir.glob("*.json")):
+        current = read_json(current_path)
+        before_path = before_dir / current_path.name
+        before = read_json(before_path) if before_path.exists() else {"items": {}}
+        for ref, item in current.get("items", {}).items():
+            if item.get("type") != "pr" and not ref.startswith("pr-"):
+                continue
+            old = before.get("items", {}).get(ref)
+            has_judgment = item.get("verdict") in REVIEW_VERDICTS or item.get("status") in REVIEW_STATES
+            if not has_judgment and not item.get("review_records"):
+                continue
+            changed = old is None or any(
+                old.get(field) != item.get(field)
+                for field in ("status", "verdict", "head_oid", "review_records")
+            )
+            acted = (current_path.stem, ref) in acted_refs
+            errors = review_record_errors(item)
+            records = item.get("review_records")
+            record = records[-1] if isinstance(records, list) and records else {}
+            old_records = old.get("review_records") if isinstance(old, dict) else None
+            if not review_history_preserved(old_records, records):
+                errors.append("review_records is append-only; a prior record changed or disappeared")
+            if (current_path.stem, ref) in posted_refs and not record.get("posted_at"):
+                errors.append("posted review must set review_record.posted_at")
+            key = f"{current_path.stem}:{ref}"
+            if changed or acted:
+                checked.append(key)
+                if errors:
+                    violations.append({"item": key, "errors": errors})
+            elif errors and "missing review_records entry" in errors:
+                legacy_missing.append(key)
+    return {
+        "ok": not violations,
+        "checked": checked,
+        "violations": violations,
+        "legacy_missing": legacy_missing,
+    }
 
 
 def recover_from_audit(state_dir: Path, audit_path: Path) -> dict:
@@ -286,12 +436,18 @@ def main() -> None:
     check.add_argument("--config", type=Path, required=True)
     check.add_argument("--activity", type=Path, required=True)
     check.add_argument("--now", required=True)
+    review = sub.add_parser("review-check")
+    review.add_argument("--before", type=Path, required=True)
+    review.add_argument("--state", type=Path, required=True)
+    review.add_argument("--activity", type=Path, required=True)
     args = parser.parse_args()
 
     if args.command == "repair":
         result = repair_ledgers(args.before, args.state)
     elif args.command == "recover":
         result = recover_from_audit(args.state, args.audit)
+    elif args.command == "review-check":
+        result = check_review_integrity(args.before, args.state, args.activity)
     else:
         result = check_tick(args.state, args.config, args.activity, args.now)
     print(json.dumps(result, separators=(",", ":")))

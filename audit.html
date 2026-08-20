@@ -1,4 +1,5 @@
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Repo Steward — Decision Log</title>
 <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
 <meta http-equiv="refresh" content="300">
@@ -82,17 +83,21 @@
   .ev .detail { font: 11.5px/1.5 ui-monospace, Menlo, monospace; color: var(--muted); margin-top: 3px; word-break: break-word; }
   .ev .fail { font-weight: 600; color: var(--crit); }
 </style>
+<link rel="stylesheet" href="/assets/site-nav.css">
 
 <main>
-  <header>
+  <header class="site-header">
     <h1>Decision Log</h1>
     <span class="dl">
       <a href="/audit.jsonl" download="audit.jsonl" title="The raw append-only log, one JSON event per line">⬇ audit.jsonl</a>
       <button id="dl-csv" title="The events currently shown below, as CSV">⬇ filtered CSV</button>
     </span>
-    <nav>
-      <a href="/dashboard.html">← dashboard</a>
-      <a href="/metrics.html">metrics →</a>
+    <nav class="site-nav" aria-label="Primary navigation">
+      <a href="/dashboard.html">Operations</a>
+      <a href="/insights.html">Insights</a>
+      <a href="/evaluation.html">Self-evaluation</a>
+      <a href="/metrics.html">Metrics</a>
+      <a href="/audit.html" aria-current="page">Audit</a>
     </nav>
   </header>
 

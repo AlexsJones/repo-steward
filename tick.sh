@@ -8,6 +8,8 @@
 # Exit codes: 0 = complete; 75 = stopped on a GitHub API escalation;
 #   76 = ended early, one or more chunks (repo ledgers / metrics / dashboard)
 #   never written; 77 = queue or conversation action budget was underused;
+#   79 = insight signal collection failed; 80 = a new PR judgment lacks a
+#   canonical review record;
 #   anything else is the engine's own exit status.
 set -uo pipefail
 STEWARD_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,6 +51,13 @@ fi
 # (STEWARD.md "Activity log"), folded into audit.jsonl when the tick ends.
 # Reset AFTER the decide drain: decide.sh folds its own slice.
 : > activity.jsonl
+
+# Materialize the maintainer's latest canvas choices before the operational
+# agent reads its queues. Selected ideas remain subordinate to the normal
+# issue/PR/discussion budget described in STEWARD.md.
+if ! python3 proactive.py sync --root "$STEWARD_HOME" >>logs/tick.log 2>&1; then
+  echo "=== tick $TS proactive queue sync failed ===" >> logs/tick.log
+fi
 
 case "$ENGINE" in
   claude)
@@ -137,6 +146,26 @@ if [[ -n "$GUARD_REPAIR" ]]; then
         summary:("preserved workflow history for " + ($count|tostring) + " destructively reset ledger item(s)"),
         data:{repaired_items:$count}}' >> audit.jsonl
   fi
+fi
+
+# Every PR judgment created or acted on in this tick must retain the exact
+# review text and its evidence. Historical missing records are reported by the
+# checker but do not make rollout impossible; new gaps are a hard failure.
+REVIEW_CHECK="$(python3 tick_guard.py review-check --before "$STATE_BEFORE" \
+  --state state --activity activity.jsonl 2>>logs/tick.log)"
+if [[ -n "$REVIEW_CHECK" ]]; then
+  echo "=== tick $TS review integrity: $REVIEW_CHECK ===" >> logs/tick.log
+fi
+if [[ "$(jq -r '.ok // false' <<<"$REVIEW_CHECK" 2>/dev/null)" != "true" ]]; then
+  VIOLATIONS="$(jq -r '.violations | length' <<<"$REVIEW_CHECK" 2>/dev/null || echo 0)"
+  ITEMS="$(jq -r '.violations | map(.item) | join(" ")' <<<"$REVIEW_CHECK" 2>/dev/null)"
+  printf '{"ts":"%s","phase":"incomplete","msg":"review integrity failed for %s item(s): %s"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$VIOLATIONS" "$ITEMS" >> progress.jsonl
+  jq -cn --arg ts "$TS" --argjson violations "$(jq -c '.violations' <<<"$REVIEW_CHECK")" \
+    '{v:1,actor:"system",via:"tick",event:"review_integrity_failure",ok:false,
+      summary:((($violations|length)|tostring) + " new PR judgment(s) lack canonical review evidence"),
+      data:{violations:$violations}}' >> audit.jsonl
+  (( RC == 0 )) && RC=80
 fi
 
 # The agent owns operational judgement, not frontend generation. Render from
@@ -243,6 +272,16 @@ if [[ -s activity.jsonl ]]; then
   jq -cR 'fromjson? | select(type=="object")
           | {v:1, actor:"steward", via:"tick", event:"steward_action"} + .' \
     activity.jsonl >> audit.jsonl || true
+fi
+# Snapshot the updated ledgers, metrics, and durable events into the evidence
+# stream consumed by the slower insights loop. Collection is deterministic and
+# idempotent: unchanged source records do not create duplicate signals.
+SIGNAL_RESULT="$(python3 signals.py collect --root "$STEWARD_HOME" 2>>logs/tick.log)"
+if [[ $? -ne 0 ]]; then
+  echo "=== tick $TS signal collection failed ===" >> logs/tick.log
+  (( RC == 0 )) && RC=79
+elif [[ -n "$SIGNAL_RESULT" ]]; then
+  echo "=== tick $TS signals: $SIGNAL_RESULT ===" >> logs/tick.log
 fi
 DUR=$(( $(date +%s) - START_EPOCH ))
 printf '{"v":1,"ts":"%s","actor":"system","via":"tick","event":"tick_done","ok":%s,"summary":"tick finished (rc=%s, %sm)","data":{"rc":%s,"engine":"%s","duration_ms":%s}}\n' \

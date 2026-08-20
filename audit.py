@@ -9,7 +9,7 @@ Schema v1 — one JSON object per line:
   v        1 (schema version)
   ts       UTC ISO-8601, when the thing happened
   actor    maintainer | steward | system
-  via      dashboard | tick | decide
+  via      dashboard | tick | decide | insights | evaluation
   event    what happened (see below)
   repo     short repo name; absent when not repo-scoped
   ref      ledger key (pr-123 / issue-45 / disc-7); absent when not item-scoped
@@ -30,10 +30,13 @@ Events:
   tick_requested     maintainer started a tick from the dashboard
   tick_done          a tick finished (ts = the tick's start, matching usage.jsonl)
   decide_done        a decision-executor run finished
+  insights_done      a validated out-of-band insight graph was published
+  insight_decision   maintainer selected, deferred, dismissed, or reset an idea
+  evaluation_done    a validated critical self-evaluation was published
   steward_action     one discrete thing the steward did or observed in a run —
                      written to activity.jsonl during the run, folded in by
                      tick.sh / decide.sh; data.kind: staged | posted | labeled |
-                     fix_pr | escalated | observed
+                     fix_pr | escalated | observed | proactive
 
 The log is append-only: nothing rewrites or deletes lines. `python3 audit.py
 backfill` converts history that predates the log (approvals.jsonl,

@@ -6,6 +6,10 @@ Static file serving plus a minimal control API:
                                   dashboard_ready}
   GET  /api/progress          -> {steps: [...]}  (per-item progress the tick emits)
   GET  /api/metrics|uptime    -> chart data
+  GET  /api/signals?repo=&kind=&limit= -> normalized evidence for insights
+  GET  /api/insights           -> current validated theme/idea graph + cited evidence
+  GET  /api/evaluation         -> latest self-evaluation, lessons, and cited evidence
+  POST /api/insight-decision   -> {idea_id, action:select|defer|dismiss|reset, note?}
   POST /api/tick              -> start one steward tick (refused while one runs)
   POST /api/mode              -> {"mode": "draft"|"live"}  (rewrites config.yaml)
   POST /api/schedule          -> {"preset": "manual"|"hourly"|"6h"|"daily"|"weekly"}
@@ -46,6 +50,9 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 import audit
+import signals
+import proactive
+from tick_guard import review_record_errors
 
 ROOT = Path(__file__).resolve().parent
 PORT = int(os.environ.get("STEWARD_PORT", "8377"))
@@ -107,6 +114,35 @@ def ref_url(full_repo, ref):
     if not path or not num.isdigit():
         return None
     return f"https://github.com/{full_repo}/{path}/{num}"
+
+
+def insight_decisions(root=ROOT):
+    """Latest local maintainer posture for each idea node."""
+    latest = {}
+    path = root / "insight-decisions.jsonl"
+    if not path.exists():
+        return latest
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        idea_id = entry.get("idea_id")
+        if idea_id:
+            if entry.get("action") == "reset":
+                latest.pop(idea_id, None)
+            else:
+                latest[idea_id] = entry
+    return latest
+
+
+def find_insight_idea(graph, idea_id):
+    for repo in (graph or {}).get("repositories", []):
+        for theme in repo.get("themes", []):
+            for idea in theme.get("ideas", []):
+                if idea.get("id") == idea_id:
+                    return repo, theme, idea
+    return None
 
 
 RESOURCES = ("issues", "prs", "discussions")
@@ -734,6 +770,61 @@ def execute_action(full_repo, number, item_type, action):
     return all(ok for ok, _ in results), "; ".join(d for _, d in results)
 
 
+def prepare_review_record(item, action, now):
+    """Return (ok, detail) after linking a review action to durable evidence.
+
+    Actions created before review records existed are retained as explicitly
+    incomplete legacy evidence. Newly linked actions are held to the strict
+    integrity contract and can never silently diverge from their record.
+    """
+    if item.get("type") != "pr" or "review" not in action.get("kind", ""):
+        return True, ""
+    records = item.get("review_records")
+    record = records[-1] if isinstance(records, list) and records else None
+    link = action.get("review_record_id")
+    if link:
+        errors = review_record_errors(item)
+        if errors:
+            return False, "; ".join(errors)
+        if record.get("id") != link:
+            return False, "staged review_record_id does not match review_record.id"
+        return True, ""
+
+    if isinstance(record, dict):
+        return False, "review action is not linked to its existing review_record"
+
+    verdict = "approve-recommend" if action.get("kind") == "pr_review_approve" else "iterate"
+    signal = item.get("signal") if isinstance(item.get("signal"), dict) else {}
+    test_evidence = signal.get("test_evidence")
+    if isinstance(test_evidence, str) and test_evidence.strip():
+        test_evidence = [test_evidence.strip()]
+    elif not isinstance(test_evidence, list):
+        test_evidence = []
+    record_id = f"legacy-{(item.get('head_oid') or 'unknown')[:12]}-{now.replace(':', '')}"
+    record = {
+        "v": 1,
+        "id": record_id,
+        "head_oid": item.get("head_oid") or "unknown",
+        "verdict": verdict,
+        "body": action.get("body", ""),
+        "recorded_at": action.get("staged_at") or now,
+        "posted_at": None,
+        "claims": [],
+        "risk_areas": signal.get("risk_areas") if isinstance(signal.get("risk_areas"), list) else [],
+        "test_evidence": test_evidence,
+        "review_basis": signal.get("review_basis", ""),
+        "integrity": "legacy-backfill",
+    }
+    item.setdefault("review_records", []).append(record)
+    action["review_record_id"] = record_id
+    return True, "legacy review evidence backfilled before posting"
+
+
+def latest_review_record(item):
+    records = item.get("review_records")
+    return records[-1] if isinstance(records, list) and records and isinstance(records[-1], dict) else {}
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -867,6 +958,55 @@ class Handler(SimpleHTTPRequestHandler):
                 return out
             return self._json(200, {"metrics": read_jsonl("metrics.jsonl"),
                                     "usage": read_jsonl("usage.jsonl")})
+        if parsed.path == "/api/signals":
+            qs = parse_qs(parsed.query)
+            try:
+                limit = min(max(int(qs.get("limit", ["500"])[0]), 0), 5000)
+            except ValueError:
+                limit = 500
+            records = signals.query(
+                ROOT / "signals.jsonl", limit=limit,
+                repo=qs.get("repo", [None])[0], kind=qs.get("kind", [None])[0])
+            return self._json(200, {"signals": records})
+        if parsed.path == "/api/insights":
+            graph_path = ROOT / "insights.json"
+            if not graph_path.exists():
+                return self._json(200, {"insights": None, "evidence": {}})
+            try:
+                graph = json.loads(graph_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                return self._json(500, {"error": "published insights are invalid JSON"})
+            cited = set()
+            for repo in graph.get("repositories", []):
+                for theme in repo.get("themes", []):
+                    cited.update(theme.get("signal_ids", []))
+                    for idea in theme.get("ideas", []):
+                        cited.update(idea.get("signal_ids", []))
+            evidence = {record["id"]: record for record in signals.read_jsonl(ROOT / "signals.jsonl")
+                        if record.get("id") in cited}
+            work = proactive.read_json(ROOT / "proactive.json", {"items": {}}).get("items", {})
+            return self._json(200, {"insights": graph, "evidence": evidence,
+                                    "decisions": insight_decisions(), "proactive": work})
+        if parsed.path == "/api/evaluation":
+            report_path = ROOT / "evaluation.json"
+            if not report_path.exists():
+                return self._json(200, {"evaluation": None, "lessons": [],
+                                        "evidence": {}, "runs": 0})
+            try:
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                return self._json(500, {"error": "published evaluation is invalid JSON"})
+            cited = set()
+            for dimension in report.get("dimensions", []):
+                cited.update(dimension.get("signal_ids", []))
+            for finding in report.get("findings", []):
+                cited.update(finding.get("signal_ids", []))
+            evidence = {row["id"]: row for row in signals.read_jsonl(ROOT / "signals.jsonl")
+                        if row.get("id") in cited}
+            history = signals.read_jsonl(ROOT / "evaluations.jsonl")
+            return self._json(200, {"evaluation": report,
+                                    "lessons": report.get("lessons", []),
+                                    "evidence": evidence, "runs": len(history)})
         if self.path == "/api/uptime":
             state_path = ROOT / "uptime_state.json"
             state = json.loads(state_path.read_text()) if state_path.exists() else {}
@@ -938,6 +1078,43 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(200, {"recorded": True, "mode": "queued", "id": entry["ts"]})
             spawn_decider()
             return self._json(200, {"recorded": True, "mode": "executing", "id": entry["ts"]})
+
+        if self.path == "/api/insight-decision":
+            idea_id = (req.get("idea_id") or "").strip()
+            action = req.get("action")
+            if action not in {"select", "defer", "dismiss", "reset"}:
+                return self._json(400, {"error": "action must be select, defer, dismiss, or reset"})
+            graph_path = ROOT / "insights.json"
+            try:
+                graph = json.loads(graph_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return self._json(409, {"error": "no validated insight graph is available"})
+            found = find_insight_idea(graph, idea_id)
+            if not found:
+                return self._json(404, {"error": "idea is not in the current insight graph"})
+            repo, theme, idea = found
+            entry = {
+                "v": 1,
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "idea_id": idea_id,
+                "repo": repo["name"],
+                "theme_id": theme["id"],
+                "action": action,
+                "note": (req.get("note") or "").strip()[:500],
+            }
+            with open(ROOT / "insight-decisions.jsonl", "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            audit.append(
+                "insight_decision", "maintainer", "insights",
+                repo=repo["name"].rsplit("/", 1)[-1], summary=f"{action} idea: {idea['title']}",
+                data={"idea_id": idea_id, "theme_id": theme["id"], "action": action,
+                      "note": entry["note"]}, ts=entry["ts"])
+            queue = proactive.sync(ROOT)
+            return self._json(200, {"recorded": True, "decision": entry,
+                                    "decisions": insight_decisions(),
+                                    "proactive": proactive.read_json(
+                                        ROOT / "proactive.json", {"items": {}}).get("items", {}),
+                                    "queue": queue})
 
         if self.path == "/api/terminal":
             # The decision executor's arm for terminal states. The engine's
@@ -1105,6 +1282,19 @@ class Handler(SimpleHTTPRequestHandler):
                 for action in item.get("staged_actions", []):
                     if action.get("executed_at"):
                         continue
+                    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    ok, detail = prepare_review_record(item, action, now)
+                    if not ok:
+                        details.append(detail)
+                        item_ok = False
+                        continue
+                    if detail:
+                        details.append(detail)
+                    # The canonical record must reach disk before the network
+                    # post. A crash can lose the outcome marker, never the
+                    # judgment that was sent.
+                    if item.get("type") == "pr" and "review" in action.get("kind", ""):
+                        ledger_path.write_text(json.dumps(ledger, indent=2))
                     try:
                         ok, detail = execute_action(full, number, item["type"], action)
                     except Exception as e:
@@ -1115,6 +1305,10 @@ class Handler(SimpleHTTPRequestHandler):
                     details.append(detail)
                     if ok:
                         action["executed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                        records = item.get("review_records")
+                        record = records[-1] if isinstance(records, list) and records else None
+                        if isinstance(record, dict) and action.get("review_record_id") == record.get("id"):
+                            record["posted_at"] = action["executed_at"]
                     item_ok = item_ok and ok
                 # Approving an approve-recommend PR is the maintainer's final
                 # look: after the review is up (this click or a previous live
@@ -1139,10 +1333,13 @@ class Handler(SimpleHTTPRequestHandler):
                                            if merged else "approved by maintainer via dashboard; posted")
                     item["last_action_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 outcomes[key] = {"ok": item_ok, "merged": merged, "detail": "; ".join(details)}
+                audit_record = latest_review_record(item)
                 audit.append("approve", "maintainer", "dashboard", repo=short,
                              ref=key, ok=item_ok, detail="; ".join(details),
                              summary="approved via dashboard" + (" & merged" if merged else ""),
-                             data={"merged": merged})
+                             data={"merged": merged,
+                                   "review_record_id": audit_record.get("id"),
+                                   "review_integrity": audit_record.get("integrity", "canonical")})
             ledger_path.write_text(json.dumps(ledger, indent=2))
             with open(ROOT / "approvals.jsonl", "a") as f:
                 f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
