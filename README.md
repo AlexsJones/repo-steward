@@ -92,9 +92,11 @@ STEWARD_CADENCE="*-*-* 07:00:00" ./install.sh
 `--model` on every tick. On the default Claude Code engine, use either the
 full ID (`claude-opus-5`, `claude-sonnet-5`, `claude-haiku-4-5`) or an alias
 (`opus`, `sonnet`, `haiku`) that tracks the newest model in that family; leave
-it unset to take the CLI's own default. Switching later means re-running the
-installer with the new value — and every install rewrites the unit from the
-environment you hand it, so an omitted variable is *not* carried over from the
+it unset to take the CLI's own default. Switch the backend later from the
+provider selector in the dashboard header; switching providers clears the old
+provider's model pin. Re-run the installer to set a new model pin. Every
+install rewrites the unit from the environment you hand it, so an omitted
+variable is *not* carried over from the
 previous install: `STEWARD_MODEL` reverts to unpinned and `STEWARD_ENGINE`
 reverts to `claude`. Pass both whenever you mean to keep both:
 

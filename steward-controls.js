@@ -480,6 +480,44 @@
   }
   var secHdr = 'font:600 11px ui-monospace,Menlo,monospace;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 10px;';
 
+  // The backend lives in the tick's systemd unit. Keep it visible in the
+  // header and make switching a direct action; unavailable CLIs remain visible
+  // so the reason they cannot be selected is clear.
+  var backend = document.createElement('select');
+  backend.title = 'AI backend used by the next tick';
+  backend.setAttribute('aria-label', 'AI backend used by the next tick');
+  backend.style.cssText = 'font:600 12px ui-monospace,Menlo,monospace;padding:9px 10px;border-radius:8px;' +
+    'border:1px solid var(--line);background:var(--panel);color:var(--muted);cursor:pointer;align-self:center;max-width:180px;';
+  function paintBackend(data) {
+    if (!data) return;
+    backend.innerHTML = '';
+    (data.options || []).forEach(function (item) {
+      var opt = document.createElement('option');
+      opt.value = item.value;
+      opt.textContent = 'AI · ' + item.label + (item.available ? '' : ' (not installed)');
+      opt.disabled = !item.available;
+      backend.appendChild(opt);
+    });
+    backend.value = data.value;
+    backend.dataset.value = data.value;
+    backend.title = 'Next tick: ' + data.label + (data.model ? ' · model ' + data.model : ' · provider default model');
+  }
+  paintBackend(initial.backend);
+  headerActions.appendChild(backend);
+  backend.addEventListener('change', function () {
+    var previous = backend.dataset.value;
+    backend.disabled = true;
+    fetch('/api/backend', { method: 'POST', body: JSON.stringify({ backend: backend.value }) })
+      .then(function (r) { return r.json().then(function (x) { if (!r.ok) throw new Error(x.error || 'backend change failed'); return x; }); })
+      .then(function (res) {
+        paintBackend(res.backend);
+        toast('Backend changed to ' + res.backend.label + ' — applies next tick.' +
+          (res.model_reset ? ' The old model pin was cleared.' : ''), 'ok');
+      })
+      .catch(function (err) { backend.value = previous; alert(err.message); })
+      .then(function () { backend.disabled = false; });
+  });
+
   // ⚙ Settings: schedule (applies immediately), tick size + watched repos
   // (one Save, applies from the next tick).
   var settingsBtn = navBtn('⚙ Settings', 'Schedule, tick size, and what the steward watches');
@@ -681,6 +719,8 @@
     fetch('/api/status').then(function (r) { return r.json(); }).then(function (s) {
       setBusy(s.tick_active);
       paintSched(s.schedule);
+      paintBackend(s.backend);
+      backend.disabled = s.tick_active;
       if (s.tick_active) {
         fetch('/api/progress').then(function (r) { return r.json(); }).then(function (p) {
           var steps = p.steps || [];

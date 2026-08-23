@@ -12,6 +12,7 @@ Static file serving plus a minimal control API:
   POST /api/insight-decision   -> {idea_id, action:select|nominate|defer|dismiss|reset, note?}
   POST /api/tick              -> start one steward tick (refused while one runs)
   POST /api/mode              -> {"mode": "draft"|"live"}  (rewrites config.yaml)
+  POST /api/backend           -> {"backend": "claude"|"codex"|"gemini"|"opencode"|"custom"}
   POST /api/schedule          -> {"preset": "manual"|"hourly"|"6h"|"daily"|"weekly"}
   POST /api/limits            -> {"substantive": N, "light": N}  (per-tick work caps)
   POST /api/signature         -> {"enabled": bool}  (toggle the comment sign-off)
@@ -42,6 +43,7 @@ import html as html_lib
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from datetime import datetime, timedelta, timezone
@@ -67,6 +69,92 @@ SCHEDULES = {
     "daily": ("*-*-* 07:00:00", "Daily at 07:00"),
     "weekly": ("Mon *-*-* 07:00:00", "Weekly (Mon 07:00)"),
 }
+
+BACKENDS = {
+    "claude": "Claude Code",
+    "codex": "OpenAI Codex",
+    "gemini": "Gemini CLI",
+    "opencode": "OpenCode",
+}
+
+
+def current_backend():
+    """Return the agent CLI configured for the next tick.
+
+    The unit file is the source of truth: the dashboard process deliberately
+    has no STEWARD_ENGINE environment of its own, and the most recent usage
+    record describes the previous tick rather than the next one.
+    """
+    service = UNIT_DIR / "repo-steward.service"
+    text = service.read_text(encoding="utf-8") if service.exists() else ""
+    match = re.search(r"^Environment=STEWARD_ENGINE=([^\s]+)", text, re.M)
+    engine = match.group(1) if match else "claude"
+    model_match = re.search(r"^Environment=STEWARD_MODEL=(.+)$", text, re.M)
+    custom_configured = bool(re.search(r"^Environment=STEWARD_ENGINE_CMD=.+$", text, re.M))
+    options = []
+    for value, label in BACKENDS.items():
+        path = shutil.which(value)
+        options.append({"value": value, "label": label, "available": bool(path)})
+    if custom_configured or engine == "custom":
+        options.append({"value": "custom", "label": "Custom command",
+                        "available": custom_configured, "custom": True})
+    elif engine not in BACKENDS:
+        options.append({"value": engine, "label": engine.title(),
+                        "available": True, "custom": True})
+    return {
+        "value": engine,
+        "label": "Custom command" if engine == "custom" else BACKENDS.get(engine, engine.title()),
+        "model": model_match.group(1).strip() if model_match else None,
+        "options": options,
+    }
+
+
+def set_backend(engine):
+    """Set the CLI used by subsequent ticks and reload the user unit."""
+    service = UNIT_DIR / "repo-steward.service"
+    if not service.exists():
+        return False, "tick service not found — run install.sh first"
+    text = service.read_text(encoding="utf-8")
+    original_text = text
+    if engine == "custom":
+        if not re.search(r"^Environment=STEWARD_ENGINE_CMD=.+$", text, re.M):
+            return False, "custom backend has no STEWARD_ENGINE_CMD — configure it with install.sh"
+        binary = None
+    elif engine in BACKENDS:
+        binary = shutil.which(engine)
+        if not binary:
+            return False, f"{BACKENDS[engine]} is not installed or is not on the dashboard PATH"
+    else:
+        return False, "backend must be claude, codex, gemini, opencode, or custom"
+    if not re.search(r"^Environment=STEWARD_ENGINE=", text, re.M):
+        return False, "tick service has no STEWARD_ENGINE setting — run install.sh first"
+    old = current_backend()["value"]
+    text = re.sub(r"^Environment=STEWARD_ENGINE=.*$",
+                  f"Environment=STEWARD_ENGINE={engine}", text, count=1, flags=re.M)
+    bin_line = f"Environment=STEWARD_ENGINE_BIN={binary}" if binary else None
+    if engine == "custom":
+        text = re.sub(r"^Environment=STEWARD_ENGINE_BIN=.*\n?", "", text,
+                      count=1, flags=re.M)
+    elif re.search(r"^Environment=STEWARD_ENGINE_BIN=", text, re.M):
+        text = re.sub(r"^Environment=STEWARD_ENGINE_BIN=.*$", bin_line,
+                      text, count=1, flags=re.M)
+    else:
+        text = re.sub(r"^(Environment=STEWARD_ENGINE=.*)$", r"\1\n" + bin_line,
+                      text, count=1, flags=re.M)
+    # Model identifiers are provider-specific. Carrying one across a switch
+    # makes the next run fail in a much less obvious place, so return the new
+    # provider to its own default model.
+    if old != engine:
+        text = re.sub(r"^Environment=STEWARD_MODEL=.*\n?", "", text, flags=re.M)
+    service.write_text(text, encoding="utf-8")
+    reload_result = subprocess.run(
+        ["systemctl", "--user", "daemon-reload"], capture_output=True, text=True)
+    if reload_result.returncode != 0:
+        service.write_text(original_text, encoding="utf-8")
+        subprocess.run(["systemctl", "--user", "daemon-reload"],
+                       capture_output=True, text=True)
+        return False, (reload_result.stderr or reload_result.stdout).strip() or "systemd reload failed"
+    return True, current_backend()
 
 def first_run_page():
     """The dashboard before any tick has generated one: the real chrome and the
@@ -872,6 +960,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "eta_sec": eta_sec(),
                 "progress": tick_progress() if active else None,
                 "schedule": current_schedule(),
+                "backend": current_backend(),
                 "limits": read_limits(),
                 "signature_enabled": signature_enabled(),
                 "last_tick": latest_tick_result(),
@@ -1205,6 +1294,20 @@ class Handler(SimpleHTTPRequestHandler):
                          summary=f"mode → {new_mode}",
                          data={"setting": "mode", "mode": new_mode})
             return self._json(200, {"mode": new_mode})
+
+        if self.path == "/api/backend":
+            if tick_active() or decide_active():
+                return self._json(409, {"error": "steward busy — switch backend when it finishes"})
+            old = current_backend()
+            ok, detail = set_backend(req.get("backend"))
+            if not ok:
+                return self._json(400, {"error": detail})
+            audit.append("config_change", "maintainer", "dashboard",
+                         summary=f"backend → {detail['label']}",
+                         data={"setting": "backend", "backend": detail["value"],
+                               "previous": old["value"], "model_reset": bool(old.get("model"))})
+            return self._json(200, {"backend": detail,
+                                    "model_reset": bool(old.get("model") and old["value"] != detail["value"])})
 
         if self.path == "/api/signature":
             enabled = req.get("enabled")
