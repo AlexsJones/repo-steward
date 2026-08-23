@@ -285,11 +285,12 @@ slots left, you MUST continue into rules 4 and 5 — reading every repo's ledger
 for in-scope items at `backlog` with no `last_action`, oldest last-activity
 first, across all repos and not just the one with fresh traffic — until the
 substantive or light limit is actually reached or no in-scope backlog remains.
-Ending a tick with unused budget and in-scope backlog outstanding is a failed
-tick, not a quiet one. Report the remaining in-scope backlog count per repo in
-the dashboard activity section alongside the scope-gate drop count; a steward
-that looks idle because it never looked is the failure this rule exists to
-prevent.
+Ending a tick with unused budget and in-scope backlog outstanding is recorded
+as a budget shortfall, not silently presented as an empty queue. A tick still
+fails when it performs no qualifying work, or when it starves the configured
+conversation floor; useful partial progress is retained as a successful run
+with an audit warning. Report the remaining in-scope backlog count per repo in
+the dashboard activity section alongside the scope-gate drop count.
 
 **Selected proactive work comes last.** `tick.sh` materializes maintainer
 choices from the Insights canvas into `proactive.json` before this session.
@@ -377,7 +378,8 @@ it now if you haven't this session.
 - **Auto-merge stale approvals (live mode only):** After triage and review,
    scan the ledger for every `ready-for-maintainer` item where:
    1. The steward's own `approve-recommend` review is posted at the PR's current
-      head on GitHub (verified via `gh pr view --json headRefOid,reviews`),
+      head on GitHub (verified via `gh pr view --json headRefOid,reviews`), with
+      a matching canonical `review_records` entry whose `posted_at` is set,
       AND
    2. The author has NOT pushed since the steward's approval was posted
       (`iterations` = 0 since review), AND
@@ -425,6 +427,20 @@ Do **not** edit or regenerate `dashboard.html` yourself. `tick.sh` runs
 events as the source of truth. Your responsibility is to finish writing those
 inputs accurately. The deterministic renderer owns the page structure and
 prevents generated markup from breaking the dashboard controls.
+
+Before concluding the operational session, run the same fleet-wide queue check
+the wrapper will run:
+
+```bash
+python3 tick_guard.py check --state state --config config.yaml \
+  --activity activity.jsonl --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+```
+
+The `--state` argument must be the complete `state` directory. Passing one
+ledger file can hide outstanding work in every other repository and is not a
+valid completion check. A remaining action-budget shortfall is reported as an
+audit warning after useful progress; no qualifying work or an unmet
+conversation floor remains a hard failure.
 
 The renderer preserves the visual structure and requirements below.
 On the very first tick there is no `dashboard.html` to carry the design forward

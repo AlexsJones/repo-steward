@@ -23,7 +23,7 @@ BIN="${STEWARD_ENGINE_BIN:-${CLAUDE_BIN:-claude}}"
 MODEL="${STEWARD_MODEL:-}"
 export STEWARD_RUNNING_TICK=1
 export STEWARD_TICK_LAUNCHER_PID="$$"
-export PROMPT="You are the sole worker inside an already-started Repo Steward tick. The running repo-steward.service, tick.sh, and parent PID $STEWARD_TICK_LAUNCHER_PID are YOUR OWN launcher, never a competing tick: do not inspect, monitor, wait for, restart, or invoke them. Begin the tick work directly. Read $STEWARD_HOME/STEWARD.md and execute its sequence exactly. Sync is not completion: tick.sh mechanically rejects the run if in-scope queue work remains and the smaller configured substantive/light budget has not been spent on staged, posted, labeled, fix-PR, merged, or escalated actions. When actionable issues/discussions exist it also requires the configured conversation-action minimum before PR work can consume the budget. Preserve every existing ledger item's workflow fields when refreshing GitHub facts, then spend the configured work budget."
+export PROMPT="You are the sole worker inside an already-started Repo Steward tick. The running repo-steward.service, tick.sh, and parent PID $STEWARD_TICK_LAUNCHER_PID are YOUR OWN launcher, never a competing tick: do not inspect, monitor, wait for, restart, or invoke them. Begin the tick work directly. Read $STEWARD_HOME/STEWARD.md and execute its sequence exactly. Sync is not completion: do real queue work through the configured substantive/light target when work remains; tick.sh records a shortfall when useful progress stops below that target and rejects a run that does no qualifying work. When actionable issues/discussions exist it also requires the configured conversation-action minimum before PR work can consume the budget. Preserve every existing ledger item's workflow fields when refreshing GitHub facts, then spend the configured work budget. Before concluding, run the queue check against the complete state directory exactly as documented; checking one repository ledger is never proof that the fleet-wide budget passed."
 
 # Keep a private pre-sync copy. The agent may refresh GitHub facts, but a
 # generated jq merge must never erase durable workflow history.
@@ -222,6 +222,19 @@ GUARD_CHECK="$(python3 tick_guard.py check --state state --config config.yaml \
   --activity activity.jsonl --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 2>>logs/tick.log)"
 if [[ -n "$GUARD_CHECK" ]]; then
   echo "=== tick $TS queue guard: $GUARD_CHECK ===" >> logs/tick.log
+fi
+if [[ "$(jq -r '.action_budget_short // false' <<<"$GUARD_CHECK" 2>/dev/null)" == "true" ]] &&
+   [[ "$(jq -r '.under_budget_failure // false' <<<"$GUARD_CHECK" 2>/dev/null)" != "true" ]]; then
+  ACTIONABLE="$(jq -r '.actionable_total' <<<"$GUARD_CHECK")"
+  ACTIONS="$(jq -r '.queue_actions' <<<"$GUARD_CHECK")"
+  REQUIRED="$(jq -r '.required_actions' <<<"$GUARD_CHECK")"
+  jq -cn --arg ts "$TS" --argjson actionable "$ACTIONABLE" --argjson actions "$ACTIONS" \
+    --argjson required "$REQUIRED" \
+    '{v:1,actor:"system",via:"tick",event:"tick_budget_shortfall",ok:true,
+      summary:("tick made progress but finished below its action target (" +
+        ($actions|tostring) + "/" + ($required|tostring) + "); " +
+        ($actionable|tostring) + " actionable item(s) remain"),
+      data:{actions:$actions,required:$required,actionable:$actionable}}' >> audit.jsonl
 fi
 if [[ "$(jq -r '.under_budget_failure // false' <<<"$GUARD_CHECK" 2>/dev/null)" == "true" ]]; then
   ACTIONABLE="$(jq -r '.actionable_total' <<<"$GUARD_CHECK")"

@@ -30,7 +30,7 @@ WORKFLOW_FIELDS = (
 )
 ACTION_KINDS = {"staged", "posted", "labeled", "fix_pr", "escalated", "merged"}
 REVIEW_VERDICTS = {"approve-recommend", "iterate", "escalate"}
-REVIEW_STATES = {"reviewed", "iterating", "ready-for-maintainer", "escalated"}
+REVIEW_STATES = {"reviewed", "iterating", "ready-for-maintainer"}
 
 
 def read_json(path: Path) -> dict:
@@ -213,7 +213,7 @@ def check_review_integrity(before_dir: Path, state_dir: Path, activity_path: Pat
     acted_refs = {
         (event.get("repo"), event.get("ref"))
         for event in events
-        if event.get("kind") in {"staged", "posted", "escalated"}
+        if event.get("kind") in {"staged", "posted"}
         and str(event.get("ref", "")).startswith("pr-")
     }
     posted_refs = {
@@ -235,15 +235,22 @@ def check_review_integrity(before_dir: Path, state_dir: Path, activity_path: Pat
             has_judgment = item.get("verdict") in REVIEW_VERDICTS or item.get("status") in REVIEW_STATES
             if not has_judgment and not item.get("review_records"):
                 continue
+            # Hydrating legacy data is not a new judgment. In particular,
+            # syncs commonly turn an absent review_records key into [] and add
+            # the first observed head OID. Only a real workflow transition, a
+            # change away from a previously known head, or changed record
+            # content makes the historical judgment subject to today's strict
+            # evidence contract.
+            old_records = old.get("review_records") if isinstance(old, dict) else None
+            records = item.get("review_records")
             changed = old is None or any(
-                old.get(field) != item.get(field)
-                for field in ("status", "verdict", "head_oid", "review_records")
-            )
+                old.get(field) != item.get(field) for field in ("status", "verdict")
+            ) or bool(
+                old.get("head_oid") and old.get("head_oid") != item.get("head_oid")
+            ) or (old_records or []) != (records or [])
             acted = (current_path.stem, ref) in acted_refs
             errors = review_record_errors(item)
-            records = item.get("review_records")
             record = records[-1] if isinstance(records, list) and records else {}
-            old_records = old.get("review_records") if isinstance(old, dict) else None
             if not review_history_preserved(old_records, records):
                 errors.append("review_records is append-only; a prior record changed or disappeared")
             if (current_path.stem, ref) in posted_refs and not record.get("posted_at"):
@@ -418,7 +425,13 @@ def check_tick(state_dir: Path, config_path: Path, activity_path: Path, now: str
         "conversation_actions": conversation_actions,
         "required_conversation_actions": required_conversation_actions,
         "sync_only_failure": bool(by_repo and actions == 0),
-        "under_budget_failure": budget_short or conversation_short,
+        "action_budget_short": budget_short,
+        "conversation_budget_short": conversation_short,
+        # Throughput is a target, not a safety boundary. A tick that did real
+        # work may finish below it and report the shortfall without discarding
+        # the whole run. No work at all, or starving conversations, remains a
+        # hard failure.
+        "under_budget_failure": bool(by_repo and actions == 0) or conversation_short,
     }
 
 

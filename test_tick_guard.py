@@ -455,7 +455,7 @@ class TickGuardTest(unittest.TestCase):
             self.assertEqual(1, result["actionable_total"])
             self.assertEqual(1, result["required_actions"])
 
-    def test_check_rejects_partially_spent_budget(self):
+    def test_check_reports_partial_progress_without_failing_the_tick(self):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)
             state = root / "state"; state.mkdir()
@@ -474,7 +474,8 @@ class TickGuardTest(unittest.TestCase):
                                 "2026-08-19T00:00:00Z")
             self.assertEqual(20, result["required_actions"])
             self.assertEqual(5, result["queue_actions"])
-            self.assertTrue(result["under_budget_failure"])
+            self.assertTrue(result["action_budget_short"])
+            self.assertFalse(result["under_budget_failure"])
 
     def test_check_rejects_pr_only_budget_when_conversations_wait(self):
         with tempfile.TemporaryDirectory() as root:

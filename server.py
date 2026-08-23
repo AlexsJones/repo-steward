@@ -624,6 +624,14 @@ def authorize_tick_auto_merge(full_repo, number):
     item = json.loads(ledger_path.read_text()).get("items", {}).get(ref)
     if not item:
         return False, "PR is not in the repository ledger"
+    evidence_errors = review_record_errors(item)
+    if evidence_errors:
+        return False, "approval lacks canonical review evidence: " + "; ".join(evidence_errors)
+    latest_record = item["review_records"][-1]
+    if latest_record.get("verdict") != "approve-recommend":
+        return False, "latest canonical review is not an approval"
+    if not latest_record.get("posted_at"):
+        return False, "canonical approval has no posted_at timestamp"
     if not steward_approval_recorded(short, ref):
         return False, "no durable steward approval event exists"
     ok, out = run_gh(["pr", "view", str(number), "-R", full_repo,
