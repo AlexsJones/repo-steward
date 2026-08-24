@@ -450,19 +450,26 @@
   var openPanel = null;
   function makePanel(width) {
     var p = document.createElement('div');
-    p.style.cssText = 'display:none;position:fixed;top:74px;right:20px;z-index:40;background:var(--panel);' +
+    p.style.cssText = 'display:none;position:fixed;top:74px;right:20px;z-index:60;background:var(--panel);' +
       'border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.3);padding:16px;' +
-      'width:' + width + ';max-width:calc(100vw - 40px);max-height:76vh;overflow:auto;';
+      'width:' + width + ';max-width:calc(100vw - 40px);overflow:auto;overscroll-behavior:contain;';
     document.body.appendChild(p);
     return p;
+  }
+  function positionPanel(p) {
+    var top = Math.ceil(header.getBoundingClientRect().bottom) + 8;
+    p.style.top = top + 'px';
+    p.style.maxHeight = Math.max(240, window.innerHeight - top - 12) + 'px';
   }
   function togglePanel(p, onOpen) {
     if (openPanel === p) { p.style.display = 'none'; openPanel = null; return; }
     if (openPanel) openPanel.style.display = 'none';
     openPanel = p;
     onOpen();
+    positionPanel(p);
     p.style.display = 'block';
   }
+  window.addEventListener('resize', function () { if (openPanel) positionPanel(openPanel); });
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && openPanel) { openPanel.style.display = 'none'; openPanel = null; }
   });
@@ -587,7 +594,7 @@
     '<div style="' + hint + 'margin-bottom:18px">selected or nominated items advanced per tick; 0 pauses the queue</div>' +
     '<div style="' + secHdr + '">Watched resources — per repository</div>' +
     '<div data-sec="watch" style="margin-bottom:14px;font-size:12px;color:var(--muted)">loading…</div>' +
-    '<button id="set-save" style="width:100%;font:600 13px system-ui,sans-serif;padding:8px;border-radius:7px;border:none;background:var(--accent);color:var(--panel);cursor:pointer">Save — applies next tick</button>';
+    '<button id="set-save" style="position:sticky;bottom:0;z-index:2;width:100%;font:600 13px system-ui,sans-serif;padding:8px;border-radius:7px;border:none;background:var(--accent);color:var(--panel);cursor:pointer;box-shadow:0 -8px 16px var(--panel)">Save — applies next tick</button>';
   spop.querySelector('[data-sec=sched]').appendChild(sched);
   spop.querySelector('[data-sec=sig]').appendChild(sigWrap);
   var limSub = spop.querySelector('#lim-sub'), limLight = spop.querySelector('#lim-light');

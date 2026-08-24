@@ -960,6 +960,16 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
+    def end_headers(self):
+        path = urlparse(self.path).path
+        if path.startswith("/api/"):
+            self.send_header("Cache-Control", "no-store")
+        elif path.endswith((".html", ".js", ".css")):
+            # Dashboard assets change in place. Force browsers to revalidate so
+            # a long-lived tab cannot keep controls from an older deployment.
+            self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+
     def _json(self, code, obj):
         payload = json.dumps(obj).encode()
         self.send_response(code)
