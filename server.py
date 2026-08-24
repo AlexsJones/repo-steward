@@ -179,6 +179,17 @@ def first_run_page():
     return page.replace("<!--REPOS-->", "\n".join(cards))
 
 
+def versioned_dashboard(page, root=ROOT):
+    """Point dashboard HTML at the exact controls asset currently on disk."""
+    controls = root / "steward-controls.js"
+    version = format(controls.stat().st_mtime_ns, "x") if controls.exists() else "missing"
+    return re.sub(
+        r'(/steward-controls\.js)(?:\?v=[^"\s]*)?',
+        lambda match: match.group(1) + "?v=" + version,
+        page,
+    )
+
+
 def repo_map():
     """Short repo name -> owner/repo, parsed from config.yaml."""
     m = {}
@@ -1167,8 +1178,10 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_header("Location", "/dashboard.html")
             self.end_headers()
             return
-        if self.path.startswith("/dashboard.html") and not (ROOT / "dashboard.html").exists():
-            payload = first_run_page().encode()
+        if parsed.path == "/dashboard.html":
+            dashboard = ROOT / "dashboard.html"
+            page = dashboard.read_text(encoding="utf-8") if dashboard.exists() else first_run_page()
+            payload = versioned_dashboard(page).encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))

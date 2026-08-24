@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import tempfile
 import unittest
 from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
@@ -29,6 +30,15 @@ class DashboardDeliveryTests(unittest.TestCase):
         self.assertIn("header.getBoundingClientRect().bottom", source)
         self.assertIn("position:sticky;bottom:0", source)
         self.assertIn('z-index:60', source)
+
+    def test_dashboard_uses_a_versioned_controls_asset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "steward-controls.js").write_text("// current", encoding="utf-8")
+            page = server.versioned_dashboard(
+                '<script src="/steward-controls.js"></script>', root,
+            )
+        self.assertRegex(page, r'src="/steward-controls\.js\?v=[0-9a-f]+"')
 
 
 if __name__ == "__main__":
