@@ -348,6 +348,14 @@ def conversation_budget_floor(config_path: Path) -> int:
     return int(match.group(1)) if match else 0
 
 
+def proactive_budget(config_path: Path) -> int:
+    match = re.search(
+        r"^[ \t]*proactive_items_per_tick:[ \t]*(\d+)",
+        config_path.read_text(encoding="utf-8"), re.MULTILINE,
+    )
+    return int(match.group(1)) if match else 1
+
+
 def in_scope(item: dict, cutoff: str | None) -> bool:
     if "steward-keep" in (item.get("labels") or []):
         return True
@@ -369,7 +377,8 @@ def is_actionable(item: dict, cutoff: str | None) -> bool:
     return bool(last_activity and last_action and last_activity > last_action)
 
 
-def check_tick(state_dir: Path, config_path: Path, activity_path: Path, now: str) -> dict:
+def check_tick(state_dir: Path, config_path: Path, activity_path: Path, now: str,
+               proactive_path: Path | None = None) -> dict:
     days = activity_floor_days(config_path)
     cutoff = None
     if days:
@@ -391,6 +400,7 @@ def check_tick(state_dir: Path, config_path: Path, activity_path: Path, now: str
 
     actions = 0
     conversation_actions = 0
+    proactive_actions = 0
     if activity_path.exists():
         for line in activity_path.read_text(encoding="utf-8").splitlines():
             try:
@@ -401,6 +411,8 @@ def check_tick(state_dir: Path, config_path: Path, activity_path: Path, now: str
                 actions += 1
                 if str(event.get("ref", "")).startswith(("issue-", "disc-")):
                     conversation_actions += 1
+            if event.get("kind") == "proactive" and event.get("ok") is not False:
+                proactive_actions += 1
     actionable_total = sum(by_repo.values())
     # An action should transition its item out of the candidate state. Adding
     # remaining + completed therefore estimates the queue available this run,
@@ -415,6 +427,16 @@ def check_tick(state_dir: Path, config_path: Path, activity_path: Path, now: str
     conversation_short = bool(
         conversation_by_repo and conversation_actions < required_conversation_actions
     )
+    proactive_items = {}
+    if proactive_path and proactive_path.exists():
+        proactive_items = read_json(proactive_path).get("items", {})
+    eligible_proactive = [
+        idea_id for idea_id, item in proactive_items.items()
+        if item.get("status") in {"selected", "nominated"}
+    ]
+    required_proactive_actions = min(
+        proactive_budget(config_path), len(eligible_proactive) + proactive_actions)
+    proactive_short = proactive_actions < required_proactive_actions
     return {
         "actionable_total": actionable_total,
         "actionable_by_repo": by_repo,
@@ -427,6 +449,10 @@ def check_tick(state_dir: Path, config_path: Path, activity_path: Path, now: str
         "sync_only_failure": bool(by_repo and actions == 0),
         "action_budget_short": budget_short,
         "conversation_budget_short": conversation_short,
+        "proactive_eligible": eligible_proactive,
+        "proactive_actions": proactive_actions,
+        "required_proactive_actions": required_proactive_actions,
+        "proactive_queue_failure": proactive_short,
         # Throughput is a target, not a safety boundary. A tick that did real
         # work may finish below it and report the shortfall without discarding
         # the whole run. No work at all, or starving conversations, remains a
@@ -448,6 +474,7 @@ def main() -> None:
     check.add_argument("--state", type=Path, required=True)
     check.add_argument("--config", type=Path, required=True)
     check.add_argument("--activity", type=Path, required=True)
+    check.add_argument("--proactive", type=Path)
     check.add_argument("--now", required=True)
     review = sub.add_parser("review-check")
     review.add_argument("--before", type=Path, required=True)
@@ -462,7 +489,7 @@ def main() -> None:
     elif args.command == "review-check":
         result = check_review_integrity(args.before, args.state, args.activity)
     else:
-        result = check_tick(args.state, args.config, args.activity, args.now)
+        result = check_tick(args.state, args.config, args.activity, args.now, args.proactive)
     print(json.dumps(result, separators=(",", ":")))
 
 

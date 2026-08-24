@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest import mock
 
 from server import authorize_tick_auto_merge
-from tick_guard import check_review_integrity
+from tick_guard import check_review_integrity, check_tick
 
 
 def write(path, value):
@@ -70,6 +70,39 @@ class SafetyBoundaryTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertIn("canonical review evidence", reason)
             run_gh.assert_not_called()
+
+    def proactive_check(self, config, activity):
+        temp = tempfile.TemporaryDirectory()
+        root = Path(temp.name); state = root / "state"; state.mkdir()
+        (root / "config.yaml").write_text(config, encoding="utf-8")
+        (root / "activity.jsonl").write_text(activity, encoding="utf-8")
+        write(root / "proactive.json", {"items": {"idea:one": {
+            "status": "selected", "selected_at": "2026-08-20T00:00:00Z"}}})
+        result = check_tick(state, root / "config.yaml", root / "activity.jsonl",
+                            "2026-08-24T10:00:00Z", root / "proactive.json")
+        temp.cleanup()
+        return result
+
+    def test_selected_work_item_requires_incremental_progress(self):
+        result = self.proactive_check("proactive_items_per_tick: 1\n", "")
+
+        self.assertTrue(result["proactive_queue_failure"])
+        self.assertEqual(1, result["required_proactive_actions"])
+        self.assertEqual(["idea:one"], result["proactive_eligible"])
+
+    def test_proactive_activity_satisfies_the_reserved_slot(self):
+        activity = ('{"kind":"proactive","ref":"idea:one","ok":true,'
+                    '"summary":"wrote bounded proposal"}\n')
+        result = self.proactive_check("proactive_items_per_tick: 1\n", activity)
+
+        self.assertFalse(result["proactive_queue_failure"])
+        self.assertEqual(1, result["proactive_actions"])
+
+    def test_zero_proactive_cap_explicitly_disables_reserved_progress(self):
+        result = self.proactive_check("proactive_items_per_tick: 0\n", "")
+
+        self.assertFalse(result["proactive_queue_failure"])
+        self.assertEqual(0, result["required_proactive_actions"])
 
 
 if __name__ == "__main__":

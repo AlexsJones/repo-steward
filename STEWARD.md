@@ -292,10 +292,11 @@ conversation floor; useful partial progress is retained as a successful run
 with an audit warning. Report the remaining in-scope backlog count per repo in
 the dashboard activity section alongside the scope-gate drop count.
 
-**Selected proactive work comes last.** `tick.sh` materializes maintainer
+**Reserve progress for selected proactive work.** `tick.sh` materializes maintainer
 choices from the Insights canvas into `proactive.json` before this session.
-Do not touch that queue until the operational and conversation requirements
-above have been satisfied for this tick. Then work at most
+After satisfying the conversation floor and any delta re-reviews already in
+flight, advance this queue before spending the rest of the tick on general
+backlog drain. Work at most
 `limits.proactive_items_per_tick` entries whose status is `selected` or
 `nominated`
 (absent defaults to `1`; `0` means none). This is a separate cap and proactive events never
@@ -308,7 +309,11 @@ For nominated work, implement the proposal and open a PR; do not substitute
 another investigation or rewrite the proposal. If repository evidence makes
 the proposal unsafe or obsolete, mark it `blocked` with the concrete reason
 instead of widening scope. Work nominations before exploratory selections,
-then oldest selection first and high-priority repositories first.
+then oldest selection first and high-priority repositories first. Every tick
+with an eligible item and a non-zero cap must append one `proactive` activity
+event per reserved slot: complete a bounded step, or mark the item `blocked`
+with the concrete reason. Merely reading or synchronizing `proactive.json` is
+not progress, and `tick.sh` rejects a tick that silently skips this queue.
 
 ### 3. Execute (within limits)
 Every drafted comment, review, and reply below follows `VOICE.md` — re-read
@@ -433,7 +438,8 @@ the wrapper will run:
 
 ```bash
 python3 tick_guard.py check --state state --config config.yaml \
-  --activity activity.jsonl --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  --activity activity.jsonl --proactive proactive.json \
+  --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ```
 
 The `--state` argument must be the complete `state` directory. Passing one

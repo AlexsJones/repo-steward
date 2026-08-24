@@ -9,7 +9,8 @@
 #   76 = ended early, one or more chunks (repo ledgers / metrics / dashboard)
 #   never written; 77 = queue or conversation action budget was underused;
 #   79 = insight signal collection failed; 80 = a new PR judgment lacks a
-#   canonical review record;
+#   canonical review record; 81 = an eligible Insights work item received no
+#   reserved incremental step;
 #   anything else is the engine's own exit status.
 set -uo pipefail
 STEWARD_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,12 +24,13 @@ BIN="${STEWARD_ENGINE_BIN:-${CLAUDE_BIN:-claude}}"
 MODEL="${STEWARD_MODEL:-}"
 export STEWARD_RUNNING_TICK=1
 export STEWARD_TICK_LAUNCHER_PID="$$"
-export PROMPT="You are the sole worker inside an already-started Repo Steward tick. The running repo-steward.service, tick.sh, and parent PID $STEWARD_TICK_LAUNCHER_PID are YOUR OWN launcher, never a competing tick: do not inspect, monitor, wait for, restart, or invoke them. Begin the tick work directly. Read $STEWARD_HOME/STEWARD.md and execute its sequence exactly. Sync is not completion: do real queue work through the configured substantive/light target when work remains; tick.sh records a shortfall when useful progress stops below that target and rejects a run that does no qualifying work. When actionable issues/discussions exist it also requires the configured conversation-action minimum before PR work can consume the budget. Preserve every existing ledger item's workflow fields when refreshing GitHub facts, then spend the configured work budget. Before concluding, run the queue check against the complete state directory exactly as documented; checking one repository ledger is never proof that the fleet-wide budget passed."
+export PROMPT="You are the sole worker inside an already-started Repo Steward tick. The running repo-steward.service, tick.sh, and parent PID $STEWARD_TICK_LAUNCHER_PID are YOUR OWN launcher, never a competing tick: do not inspect, monitor, wait for, restart, or invoke them. Begin the tick work directly. Read $STEWARD_HOME/STEWARD.md and execute its sequence exactly. Sync is not completion: do real queue work through the configured substantive/light target when work remains; tick.sh records a shortfall when useful progress stops below that target and rejects a run that does no qualifying work. When actionable issues/discussions exist it also requires the configured conversation-action minimum before PR work can consume the budget. After that floor, reserve the configured proactive slot for incremental progress on existing selected or nominated Insights work before general backlog drain; synchronizing proactive.json is not progress. Preserve every existing ledger item's workflow fields when refreshing GitHub facts, then spend the configured work budget. Before concluding, run the queue check against the complete state directory exactly as documented; checking one repository ledger is never proof that the fleet-wide budget passed."
 
 # Keep a private pre-sync copy. The agent may refresh GitHub facts, but a
 # generated jq merge must never erase durable workflow history.
 STATE_BEFORE="$(mktemp -d)"
-trap 'rm -rf -- "$STATE_BEFORE"' EXIT
+PROACTIVE_BEFORE="$(mktemp)"
+trap 'rm -rf -- "$STATE_BEFORE"; rm -f -- "$PROACTIVE_BEFORE"' EXIT
 if [[ -d state ]]; then
   cp -a state/. "$STATE_BEFORE/"
 fi
@@ -57,6 +59,11 @@ fi
 # issue/PR/discussion budget described in STEWARD.md.
 if ! python3 proactive.py sync --root "$STEWARD_HOME" >>logs/tick.log 2>&1; then
   echo "=== tick $TS proactive queue sync failed ===" >> logs/tick.log
+fi
+if [[ -f proactive.json ]]; then
+  cp proactive.json "$PROACTIVE_BEFORE"
+else
+  printf '{"items":{}}\n' > "$PROACTIVE_BEFORE"
 fi
 
 case "$ENGINE" in
@@ -219,7 +226,8 @@ fi
 # that the steward did its job. Refuse a green sync-only tick when the ledger
 # still contains in-scope backlog or a conversation updated after our action.
 GUARD_CHECK="$(python3 tick_guard.py check --state state --config config.yaml \
-  --activity activity.jsonl --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 2>>logs/tick.log)"
+  --activity activity.jsonl --proactive "$PROACTIVE_BEFORE" \
+  --now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" 2>>logs/tick.log)"
 if [[ -n "$GUARD_CHECK" ]]; then
   echo "=== tick $TS queue guard: $GUARD_CHECK ===" >> logs/tick.log
 fi
@@ -257,6 +265,21 @@ if [[ "$(jq -r '.under_budget_failure // false' <<<"$GUARD_CHECK" 2>/dev/null)" 
         conversation_actions:$conversation_actions,required_conversations:$required_conversations,
         actionable:$actionable,repositories:$repos}}' >> audit.jsonl
   (( RC == 0 )) && RC=77
+fi
+if [[ "$(jq -r '.proactive_queue_failure // false' <<<"$GUARD_CHECK" 2>/dev/null)" == "true" ]]; then
+  PROACTIVE_ACTIONS="$(jq -r '.proactive_actions' <<<"$GUARD_CHECK")"
+  REQUIRED_PROACTIVE="$(jq -r '.required_proactive_actions' <<<"$GUARD_CHECK")"
+  ELIGIBLE_PROACTIVE="$(jq -r '.proactive_eligible | join(" ")' <<<"$GUARD_CHECK")"
+  printf '{"ts":"%s","phase":"incomplete","msg":"build queue did not progress (%s/%s): %s"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PROACTIVE_ACTIONS" "$REQUIRED_PROACTIVE" \
+    "$ELIGIBLE_PROACTIVE" >> progress.jsonl
+  jq -cn --arg ts "$TS" --argjson actions "$PROACTIVE_ACTIONS" \
+    --argjson required "$REQUIRED_PROACTIVE" --arg items "$ELIGIBLE_PROACTIVE" \
+    '{v:1,actor:"system",via:"tick",event:"proactive_queue_stalled",ok:false,
+      summary:("Insights work queue did not receive its reserved step (" +
+        ($actions|tostring) + "/" + ($required|tostring) + ")"),
+      data:{actions:$actions,required:$required,items:($items|split(" "))}}' >> audit.jsonl
+  (( RC == 0 )) && RC=81
 fi
 
 # Record real per-chunk completion offsets (seconds from tick start, from file
