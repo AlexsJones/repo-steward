@@ -46,6 +46,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -58,6 +59,7 @@ import proactive
 from tick_guard import review_record_errors
 
 ROOT = Path(__file__).resolve().parent
+CONFIG_LOCK = threading.RLock()
 PORT = int(os.environ.get("STEWARD_PORT", "8377"))
 HOST = os.environ.get("STEWARD_HOST", "0.0.0.0")
 UNIT_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "systemd" / "user"
@@ -267,6 +269,17 @@ def nomination_error(root, idea_id):
 RESOURCES = ("issues", "prs", "discussions")
 
 
+def atomic_write_text(path, text):
+    """Replace a text file without exposing a truncated intermediate state."""
+    temporary = path.with_name(
+        f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        temporary.write_text(text, encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def repos_config():
     """The repos: entries with name/priority/watch. watch defaults to every
     resource when the key is absent."""
@@ -300,36 +313,37 @@ def set_watch(name, watch=None, priority=None):
             return False, "watch at least one resource"
     if priority is not None and priority not in ("high", "medium", "low"):
         return False, "priority must be high|medium|low"
-    path = ROOT / "config.yaml"
-    lines = path.read_text().splitlines(keepends=True)
-    i = next((k for k, ln in enumerate(lines)
-              if re.match(r"\s*-\s*name:\s*" + re.escape(name) + r"\s*(#.*)?$", ln)), None)
-    if i is None:
-        return False, f"{name!r} not in config"
-    j = i + 1
-    while j < len(lines) and not re.match(r"\s*-\s*name:|^\S", lines[j]):
-        j += 1
-    block = lines[i:j]
-    if priority is not None:
-        for k, ln in enumerate(block):
-            mm = re.match(r"(\s*priority:\s*)\w+(.*)$", ln.rstrip("\n"))
-            if mm:
-                block[k] = mm.group(1) + priority + mm.group(2) + "\n"
-                break
-        else:
-            block.insert(1, "    priority: " + priority + "\n")
-    if watch is not None:
-        wline = "    watch: [" + ", ".join(w for w in RESOURCES if w in watch) + "]\n"
-        for k, ln in enumerate(block):
-            if re.match(r"\s*watch:", ln):
-                block[k] = wline
-                break
-        else:
-            k = len(block)
-            while k > 1 and block[k - 1].strip() == "":
-                k -= 1
-            block.insert(k, wline)
-    path.write_text("".join(lines[:i] + block + lines[j:]))
+    with CONFIG_LOCK:
+        path = ROOT / "config.yaml"
+        lines = path.read_text().splitlines(keepends=True)
+        i = next((k for k, ln in enumerate(lines)
+                  if re.match(r"\s*-\s*name:\s*" + re.escape(name) + r"\s*(#.*)?$", ln)), None)
+        if i is None:
+            return False, f"{name!r} not in config"
+        j = i + 1
+        while j < len(lines) and not re.match(r"\s*-\s*name:|^\S", lines[j]):
+            j += 1
+        block = lines[i:j]
+        if priority is not None:
+            for k, ln in enumerate(block):
+                mm = re.match(r"(\s*priority:\s*)\w+(.*)$", ln.rstrip("\n"))
+                if mm:
+                    block[k] = mm.group(1) + priority + mm.group(2) + "\n"
+                    break
+            else:
+                block.insert(1, "    priority: " + priority + "\n")
+        if watch is not None:
+            wline = "    watch: [" + ", ".join(w for w in RESOURCES if w in watch) + "]\n"
+            for k, ln in enumerate(block):
+                if re.match(r"\s*watch:", ln):
+                    block[k] = wline
+                    break
+            else:
+                k = len(block)
+                while k > 1 and block[k - 1].strip() == "":
+                    k -= 1
+                block.insert(k, wline)
+        atomic_write_text(path, "".join(lines[:i] + block + lines[j:]))
     return True, None
 
 
@@ -390,27 +404,29 @@ def set_limits(sub, light, proactive=None):
         return False, "limits must be integers"
     if not (1 <= sub <= 100 and 1 <= light <= 200 and 0 <= proactive <= 20):
         return False, "out of range (substantive 1-100, light 1-200, work queue 0-20)"
-    txt = (ROOT / "config.yaml").read_text()
-    txt, n1 = re.subn(r"^(\s*substantive_items_per_tick:\s*)\d+",
-                      lambda m: m.group(1) + str(sub), txt, count=1, flags=re.M)
-    txt, n2 = re.subn(r"^(\s*light_items_per_tick:\s*)\d+",
-                      lambda m: m.group(1) + str(light), txt, count=1, flags=re.M)
-    if not (n1 and n2):
-        return False, "limits block not found in config.yaml"
-    txt, n3 = re.subn(r"^(\s*proactive_items_per_tick:\s*)\d+",
-                      lambda m: m.group(1) + str(proactive), txt, count=1, flags=re.M)
-    if not n3:
-        # Older configs predate this limit. Add it next to the other tick caps,
-        # using the light-limit indentation and leaving inline comments intact.
-        txt, n3 = re.subn(
-            r"^([ \t]*)light_items_per_tick:.*$",
-            lambda m: m.group(0) + "\n" + m.group(1)
-            + "proactive_items_per_tick: " + str(proactive),
-            txt, count=1, flags=re.M,
-        )
-    if not n3:
-        return False, "limits block not found in config.yaml"
-    (ROOT / "config.yaml").write_text(txt)
+    with CONFIG_LOCK:
+        path = ROOT / "config.yaml"
+        txt = path.read_text()
+        txt, n1 = re.subn(r"^(\s*substantive_items_per_tick:\s*)\d+",
+                          lambda m: m.group(1) + str(sub), txt, count=1, flags=re.M)
+        txt, n2 = re.subn(r"^(\s*light_items_per_tick:\s*)\d+",
+                          lambda m: m.group(1) + str(light), txt, count=1, flags=re.M)
+        if not (n1 and n2):
+            return False, "limits block not found in config.yaml"
+        txt, n3 = re.subn(r"^(\s*proactive_items_per_tick:\s*)\d+",
+                          lambda m: m.group(1) + str(proactive), txt, count=1, flags=re.M)
+        if not n3:
+            # Older configs predate this limit. Add it next to the other tick caps,
+            # using the light-limit indentation and leaving inline comments intact.
+            txt, n3 = re.subn(
+                r"^([ \t]*)light_items_per_tick:.*$",
+                lambda m: m.group(0) + "\n" + m.group(1)
+                + "proactive_items_per_tick: " + str(proactive),
+                txt, count=1, flags=re.M,
+            )
+        if not n3:
+            return False, "limits block not found in config.yaml"
+        atomic_write_text(path, txt)
     return True, {"substantive": sub, "light": light, "proactive": proactive}
 
 
@@ -1331,12 +1347,14 @@ class Handler(SimpleHTTPRequestHandler):
             new_mode = req.get("mode")
             if new_mode not in ("draft", "live"):
                 return self._json(400, {"error": "mode must be 'draft' or 'live'"})
-            cfg_path = ROOT / "config.yaml"
-            cfg = cfg_path.read_text()
-            cfg, n = re.subn(r"^mode:\s*\w+", f"mode: {new_mode}", cfg, count=1, flags=re.M)
-            if not n:
-                return self._json(500, {"error": "no 'mode:' line found in config.yaml"})
-            cfg_path.write_text(cfg)
+            with CONFIG_LOCK:
+                cfg_path = ROOT / "config.yaml"
+                cfg = cfg_path.read_text()
+                cfg, n = re.subn(
+                    r"^mode:\s*\w+", f"mode: {new_mode}", cfg, count=1, flags=re.M)
+                if not n:
+                    return self._json(500, {"error": "no 'mode:' line found in config.yaml"})
+                atomic_write_text(cfg_path, cfg)
             audit.append("config_change", "maintainer", "dashboard",
                          summary=f"mode → {new_mode}",
                          data={"setting": "mode", "mode": new_mode})
@@ -1360,15 +1378,17 @@ class Handler(SimpleHTTPRequestHandler):
             enabled = req.get("enabled")
             if not isinstance(enabled, bool):
                 return self._json(400, {"error": "enabled must be true or false"})
-            cfg_path = ROOT / "config.yaml"
-            cfg = cfg_path.read_text()
-            line = f"signature_enabled: {str(enabled).lower()}"
-            cfg, n = re.subn(r"^signature_enabled:.*$", line, cfg, count=1, flags=re.M)
-            if not n:
-                cfg, n = re.subn(r"^(signature:)", line + "\n\\1", cfg, count=1, flags=re.M)
-            if not n:
-                cfg = cfg.rstrip("\n") + "\n" + line + "\n"
-            cfg_path.write_text(cfg)
+            with CONFIG_LOCK:
+                cfg_path = ROOT / "config.yaml"
+                cfg = cfg_path.read_text()
+                line = f"signature_enabled: {str(enabled).lower()}"
+                cfg, n = re.subn(r"^signature_enabled:.*$", line, cfg, count=1, flags=re.M)
+                if not n:
+                    cfg, n = re.subn(
+                        r"^(signature:)", line + "\n\\1", cfg, count=1, flags=re.M)
+                if not n:
+                    cfg = cfg.rstrip("\n") + "\n" + line + "\n"
+                atomic_write_text(cfg_path, cfg)
             audit.append("config_change", "maintainer", "dashboard",
                          summary=f"signature → {'on' if enabled else 'off'}",
                          data={"setting": "signature_enabled", "enabled": enabled})

@@ -630,12 +630,18 @@
       '</tr></thead><tbody>' + rows + '</tbody></table>';
   }
   spop.querySelector('#set-save').addEventListener('click', function () {
-    var posts = [
-      fetch('/api/limits', { method: 'POST', body: JSON.stringify({
+    function postSettings(path, body) {
+      return fetch(path, { method: 'POST', body: JSON.stringify(body) })
+        .then(function (r) {
+          return r.json().then(function (res) {
+            if (!r.ok || res.error) throw new Error(res.error || 'settings request failed');
+            return res;
+          });
+        });
+    }
+    var save = postSettings('/api/limits', {
         substantive: +limSub.value, light: +limLight.value, proactive: +limProactive.value
-      }) })
-        .then(function (r) { return r.json(); })
-    ];
+      });
     if (watchData) {
       var repos = Array.prototype.map.call(spop.querySelectorAll('[data-sec=watch] tbody tr'), function (tr) {
         return {
@@ -646,15 +652,12 @@
       });
       var empty = repos.filter(function (r) { return !r.watch.length; });
       if (empty.length) { alert(empty[0].name + ' has nothing watched — keep at least one resource, or remove the repo from config.yaml.'); return; }
-      posts.push(fetch('/api/watch', { method: 'POST', body: JSON.stringify({ repos: repos }) })
-        .then(function (r) { return r.json(); }));
+      save = save.then(function () { return postSettings('/api/watch', { repos: repos }); });
     }
-    Promise.all(posts).then(function (results) {
-      var err = results.filter(function (res) { return res.error; })[0];
-      if (err) { alert(err.error); return; }
+    save.then(function () {
       spop.style.display = 'none'; openPanel = null;
       toast('Settings saved — applies next tick.', 'ok');
-    }).catch(function () { alert('save failed — is the API up?'); });
+    }).catch(function (err) { alert('Settings not saved: ' + err.message); });
   });
   settingsBtn.addEventListener('click', function () {
     togglePanel(spop, function () {

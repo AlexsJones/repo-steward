@@ -40,6 +40,12 @@ class DashboardDeliveryTests(unittest.TestCase):
             )
         self.assertRegex(page, r'src="/steward-controls\.js\?v=[0-9a-f]+"')
 
+    def test_settings_writes_limits_before_repositories(self):
+        source = Path(__file__).with_name("steward-controls.js").read_text(encoding="utf-8")
+        self.assertIn(
+            "save = save.then(function () { return postSettings('/api/watch'", source,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
