@@ -400,7 +400,7 @@ def check_tick(state_dir: Path, config_path: Path, activity_path: Path, now: str
 
     actions = 0
     conversation_actions = 0
-    proactive_actions = 0
+    proactive_action_refs: set[str] = set()
     if activity_path.exists():
         for line in activity_path.read_text(encoding="utf-8").splitlines():
             try:
@@ -412,7 +412,9 @@ def check_tick(state_dir: Path, config_path: Path, activity_path: Path, now: str
                 if str(event.get("ref", "")).startswith(("issue-", "disc-")):
                     conversation_actions += 1
             if event.get("kind") == "proactive" and event.get("ok") is not False:
-                proactive_actions += 1
+                ref = event.get("ref")
+                if isinstance(ref, str) and ref:
+                    proactive_action_refs.add(ref)
     actionable_total = sum(by_repo.values())
     # An action should transition its item out of the candidate state. Adding
     # remaining + completed therefore estimates the queue available this run,
@@ -434,8 +436,14 @@ def check_tick(state_dir: Path, config_path: Path, activity_path: Path, now: str
         idea_id for idea_id, item in proactive_items.items()
         if item.get("status") in {"selected", "nominated"}
     ]
+    proactive_actions = len(set(eligible_proactive) & proactive_action_refs)
+    # `proactive_path` is the pre-tick snapshot (see tick.sh). Unlike the
+    # operational ledgers above, it already contains the complete queue that
+    # was eligible when this run began. Adding completed actions would count
+    # the same item twice: one selected item advanced once would incorrectly
+    # become a two-action requirement.
     required_proactive_actions = min(
-        proactive_budget(config_path), len(eligible_proactive) + proactive_actions)
+        proactive_budget(config_path), len(eligible_proactive))
     proactive_short = proactive_actions < required_proactive_actions
     return {
         "actionable_total": actionable_total,

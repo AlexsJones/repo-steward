@@ -98,6 +98,38 @@ class SafetyBoundaryTests(unittest.TestCase):
         self.assertFalse(result["proactive_queue_failure"])
         self.assertEqual(1, result["proactive_actions"])
 
+    def test_completed_proactive_action_is_not_counted_as_another_required_item(self):
+        activity = ('{"kind":"proactive","ref":"idea:one","ok":true,'
+                    '"summary":"wrote bounded proposal"}\n')
+        result = self.proactive_check("proactive_items_per_tick: 3\n", activity)
+
+        self.assertFalse(result["proactive_queue_failure"])
+        self.assertEqual(1, result["required_proactive_actions"])
+        self.assertEqual(1, result["proactive_actions"])
+
+    def test_one_idea_cannot_satisfy_another_ideas_reserved_slot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); state = root / "state"; state.mkdir()
+            (root / "config.yaml").write_text(
+                "proactive_items_per_tick: 3\n", encoding="utf-8")
+            (root / "activity.jsonl").write_text(
+                '{"kind":"proactive","ref":"idea:one","ok":true}\n'
+                '{"kind":"proactive","ref":"idea:one","ok":true}\n'
+                '{"kind":"proactive","ref":"idea:unrelated","ok":true}\n',
+                encoding="utf-8")
+            write(root / "proactive.json", {"items": {
+                "idea:one": {"status": "selected"},
+                "idea:two": {"status": "nominated"},
+            }})
+
+            result = check_tick(
+                state, root / "config.yaml", root / "activity.jsonl",
+                "2026-08-24T10:00:00Z", root / "proactive.json")
+
+            self.assertTrue(result["proactive_queue_failure"])
+            self.assertEqual(2, result["required_proactive_actions"])
+            self.assertEqual(1, result["proactive_actions"])
+
     def test_zero_proactive_cap_explicitly_disables_reserved_progress(self):
         result = self.proactive_check("proactive_items_per_tick: 0\n", "")
 
