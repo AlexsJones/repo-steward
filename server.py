@@ -14,7 +14,8 @@ Static file serving plus a minimal control API:
   POST /api/mode              -> {"mode": "draft"|"live"}  (rewrites config.yaml)
   POST /api/backend           -> {"backend": "claude"|"codex"|"gemini"|"opencode"|"custom"}
   POST /api/schedule          -> {"preset": "manual"|"hourly"|"6h"|"daily"|"weekly"}
-  POST /api/limits            -> {"substantive": N, "light": N}  (per-tick work caps)
+  POST /api/limits            -> {"substantive": N, "light": N, "proactive": N}
+                                  (per-tick work caps)
   POST /api/signature         -> {"enabled": bool}  (toggle the comment sign-off)
   GET  /api/watch             -> per-repo watched resources + priority
   POST /api/watch             -> {"repos": [{"name", "watch": [...], "priority"}]}
@@ -366,16 +367,18 @@ def read_limits():
         m = re.search(r"^\s*" + key + r":\s*(\d+)", txt, re.M)
         return int(m.group(1)) if m else default
     return {"substantive": g("substantive_items_per_tick", 8),
-            "light": g("light_items_per_tick", 24)}
+            "light": g("light_items_per_tick", 24),
+            "proactive": g("proactive_items_per_tick", 1)}
 
 
-def set_limits(sub, light):
+def set_limits(sub, light, proactive=None):
     try:
         sub, light = int(sub), int(light)
+        proactive = read_limits()["proactive"] if proactive is None else int(proactive)
     except (TypeError, ValueError):
         return False, "limits must be integers"
-    if not (1 <= sub <= 100 and 1 <= light <= 200):
-        return False, "out of range (substantive 1-100, light 1-200)"
+    if not (1 <= sub <= 100 and 1 <= light <= 200 and 0 <= proactive <= 20):
+        return False, "out of range (substantive 1-100, light 1-200, work queue 0-20)"
     txt = (ROOT / "config.yaml").read_text()
     txt, n1 = re.subn(r"^(\s*substantive_items_per_tick:\s*)\d+",
                       lambda m: m.group(1) + str(sub), txt, count=1, flags=re.M)
@@ -383,8 +386,21 @@ def set_limits(sub, light):
                       lambda m: m.group(1) + str(light), txt, count=1, flags=re.M)
     if not (n1 and n2):
         return False, "limits block not found in config.yaml"
+    txt, n3 = re.subn(r"^(\s*proactive_items_per_tick:\s*)\d+",
+                      lambda m: m.group(1) + str(proactive), txt, count=1, flags=re.M)
+    if not n3:
+        # Older configs predate this limit. Add it next to the other tick caps,
+        # using the light-limit indentation and leaving inline comments intact.
+        txt, n3 = re.subn(
+            r"^([ \t]*)light_items_per_tick:.*$",
+            lambda m: m.group(0) + "\n" + m.group(1)
+            + "proactive_items_per_tick: " + str(proactive),
+            txt, count=1, flags=re.M,
+        )
+    if not n3:
+        return False, "limits block not found in config.yaml"
     (ROOT / "config.yaml").write_text(txt)
-    return True, {"substantive": sub, "light": light}
+    return True, {"substantive": sub, "light": light, "proactive": proactive}
 
 
 def tick_active():
@@ -1345,11 +1361,13 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"schedule": current_schedule()})
 
         if self.path == "/api/limits":
-            ok, detail = set_limits(req.get("substantive"), req.get("light"))
+            ok, detail = set_limits(req.get("substantive"), req.get("light"),
+                                    req.get("proactive"))
             if not ok:
                 return self._json(400, {"error": detail})
             audit.append("config_change", "maintainer", "dashboard",
-                         summary=f"limits → substantive {detail['substantive']}, light {detail['light']}",
+                         summary=(f"limits → substantive {detail['substantive']}, "
+                                  f"light {detail['light']}, work queue {detail['proactive']}"),
                          data={"setting": "limits", **detail})
             return self._json(200, {"limits": detail})
 

@@ -582,14 +582,23 @@
     '<label style="' + lbl + '">Substantive <input id="lim-sub" type="number" min="1" max="100" style="' + numIn + '"></label>' +
     '<div style="' + hint + '">deep PR reviews, repro attempts, fix PRs</div>' +
     '<label style="' + lbl + '">Light <input id="lim-light" type="number" min="1" max="200" style="' + numIn + '"></label>' +
-    '<div style="' + hint + 'margin-bottom:18px">triage, labels, delta re-reviews</div>' +
+    '<div style="' + hint + '">triage, labels, delta re-reviews</div>' +
+    '<label style="' + lbl + '">Insights work queue <input id="lim-proactive" type="number" min="0" max="20" style="' + numIn + '"></label>' +
+    '<div style="' + hint + 'margin-bottom:18px">selected or nominated items advanced per tick; 0 pauses the queue</div>' +
     '<div style="' + secHdr + '">Watched resources — per repository</div>' +
     '<div data-sec="watch" style="margin-bottom:14px;font-size:12px;color:var(--muted)">loading…</div>' +
     '<button id="set-save" style="width:100%;font:600 13px system-ui,sans-serif;padding:8px;border-radius:7px;border:none;background:var(--accent);color:var(--panel);cursor:pointer">Save — applies next tick</button>';
   spop.querySelector('[data-sec=sched]').appendChild(sched);
   spop.querySelector('[data-sec=sig]').appendChild(sigWrap);
   var limSub = spop.querySelector('#lim-sub'), limLight = spop.querySelector('#lim-light');
-  function paintLimits(l) { if (l) { limSub.value = l.substantive; limLight.value = l.light; } }
+  var limProactive = spop.querySelector('#lim-proactive');
+  function paintLimits(l) {
+    if (l) {
+      limSub.value = l.substantive;
+      limLight.value = l.light;
+      limProactive.value = l.proactive == null ? 1 : l.proactive;
+    }
+  }
   paintLimits(initial.limits);
 
   var watchData = null;
@@ -615,7 +624,9 @@
   }
   spop.querySelector('#set-save').addEventListener('click', function () {
     var posts = [
-      fetch('/api/limits', { method: 'POST', body: JSON.stringify({ substantive: +limSub.value, light: +limLight.value }) })
+      fetch('/api/limits', { method: 'POST', body: JSON.stringify({
+        substantive: +limSub.value, light: +limLight.value, proactive: +limProactive.value
+      }) })
         .then(function (r) { return r.json(); })
     ];
     if (watchData) {
