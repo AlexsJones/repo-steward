@@ -7,7 +7,7 @@
 > **An autonomous agent for open-source repository management.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f.svg)](LICENSE)
-[![Engine: Claude Code](https://img.shields.io/badge/engine-Claude%20Code%20%7C%20Codex%20%7C%20Gemini%20%7C%20opencode-1d6e62.svg)](#ai-backends)
+[![Engine: Claude Code](https://img.shields.io/badge/engine-Claude%20Code%20%7C%20Codex%20%7C%20Gemini%20%7C%20Muse%20%7C%20opencode-1d6e62.svg)](#ai-backends)
 
 Repo Steward is an agent that runs the operational side of maintaining
 open-source repositories — triaging issues, reviewing pull requests across
@@ -106,6 +106,33 @@ STEWARD_MODEL=claude-opus-5 ./install.sh   # Opus 5 on Claude Code
 STEWARD_ENGINE=opencode STEWARD_MODEL=ollama/qwen3 ./install.sh   # keep both
 ```
 
+### GitHub token
+
+The tick and dashboard shell out to `gh`, so they need your GitHub credential
+in an environment systemd can see — your shell rc is never sourced there. The
+installer snapshots the token into `~/.config/repo-steward/env` (mode `0600`,
+read as `GITHUB_TOKEN` by both units) and never into the unit files
+themselves, where `systemctl show` would expose it.
+
+By default the installer reads `GH_TOKEN`, falling back to `GITHUB_TOKEN`. If
+your token lives under a custom name (e.g. `GITHUB_TOKEN_REPO_STEWARD` in
+`~/.zshrc`), point the installer at it:
+
+```bash
+source ~/.zshrc   # or otherwise export the variable in this shell
+STEWARD_GITHUB_TOKEN_VAR=GITHUB_TOKEN_REPO_STEWARD ./install.sh
+```
+
+The usual re-run rule applies: pass `STEWARD_ENGINE` / `STEWARD_MODEL` again
+whenever you mean to keep them. With no token exported, the installer falls
+back to `gh`'s stored auth (`~/.config/gh/hosts.yml`, which the service finds
+via `HOME`, including keyring-backed credentials) — but an rc-only variable
+reaches neither path, which is what the snapshot is for. Re-run the installer
+after rotating the token; the snapshot is not live.
+
+Scope-wise the token needs at least `repo`, plus `workflow` if the steward
+should touch `.github/workflows` files — without it, those merges stay manual.
+
 To confirm what the *next* tick will use, read the unit rather than the log —
 `logs/tick.log` only gains a `=== tick <ts> engine=<name> ===` header when a
 tick finishes, so just after an install its tail still describes the old setup:
@@ -127,6 +154,7 @@ so backends are headless coding-agent CLIs, selected at install time:
 ./install.sh                                            # Claude Code (default)
 STEWARD_ENGINE=codex ./install.sh                       # OpenAI Codex CLI
 STEWARD_ENGINE=gemini ./install.sh                      # Gemini CLI
+STEWARD_ENGINE=muse ./install.sh                        # Muse Code
 STEWARD_ENGINE=opencode STEWARD_MODEL=ollama/qwen3 ./install.sh   # local models
 STEWARD_ENGINE=custom STEWARD_ENGINE_CMD='my-agent --prompt "$PROMPT"' ./install.sh
 ```
@@ -156,6 +184,10 @@ STEWARD_ENGINE=custom STEWARD_ENGINE_CMD='my-agent --prompt "$PROMPT"' ./install
   completed (repo ledgers, metrics, dashboard writes — file mtimes, never the
   model's self-reported position), and the ETA is the median of real per-chunk
   timings from past ticks (`timings.jsonl`).
+  While a tick is active this becomes **Stop tick**. Stopping requires
+  confirmation, terminates only the tick service, preserves partial local
+  artifacts, and cannot undo actions already posted to GitHub. The cancellation
+  is recorded in the audit log and is never presented as a successful tick.
 - **Decisions needed** — each escalation carries a text box: type what you
   want done, press Enter. See [Decisions & approvals](#decisions--approvals).
 - **Ready for your final look** — the recommend-to-merge shortlist. Rows are
@@ -289,7 +321,9 @@ decision point: **Nominate for build** puts that bounded proposal back into the
 next eligible tick with implementation intent. The steward must then create a
 branch, run relevant tests, and open a PR rather than silently stopping at
 another analysis pass. Selection or nomination never authorizes a merge, close,
-or roadmap commitment.
+or roadmap commitment. A persistent **Build & investigation queue** above the
+canvas shows nominated investigations, proposals awaiting nomination, active
+builds, blockers, and open PRs across every configured repository.
 
 ### Steward self-evaluation
 
@@ -452,7 +486,7 @@ and the properties that matter here come from deliberately **not** having one:
   opposite direction; you'd be turning features off.
 
 - **No lock-in to one harness's abstractions.** The tick engine is already
-  swappable (`claude` / `codex` / `gemini` / `opencode` / `custom`). If you
+  swappable (`claude` / `codex` / `gemini` / `muse` / `opencode` / `custom`). If you
   *want* a harness, point `STEWARD_ENGINE=custom` at it and the steward's
   file-based contract still holds. This isn't anti-harness — it's
   harness-agnostic, with the orchestration kept boring on purpose.

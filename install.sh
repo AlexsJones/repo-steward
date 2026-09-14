@@ -8,12 +8,17 @@
 #
 # Env overrides:
 #   STEWARD_ENGINE     agent CLI running the tick: claude (default) | codex |
-#                      gemini | opencode | custom
+#                      gemini | muse | opencode | custom
 #   STEWARD_ENGINE_CMD full command for engine=custom ($PROMPT is exported)
 #   STEWARD_MODEL      pin a model for ticks (e.g. claude-opus-5); default:
 #                      the engine's own default
 #   STEWARD_PORT       dashboard port (default 8377)
 #   STEWARD_CADENCE    systemd OnCalendar for ticks (default "*-*-* *:17:00" = hourly at :17)
+#   STEWARD_GITHUB_TOKEN_VAR
+#                      name of the variable holding the GitHub token
+#                      (default: GH_TOKEN, falling back to GITHUB_TOKEN).
+#                      Point it at a custom name when your token lives under
+#                      one, e.g. STEWARD_GITHUB_TOKEN_VAR=GITHUB_TOKEN_REPO_STEWARD
 set -euo pipefail
 
 STEWARD_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -71,15 +76,29 @@ done
 # reach the service. Persist it to a 0600 EnvironmentFile rather than an inline
 # Environment= line, which `systemctl show` exposes to any local user.
 ENV_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/repo-steward/env"
-_tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+if [[ -n "${STEWARD_GITHUB_TOKEN_VAR:-}" ]]; then
+  # Explicit source: honor exactly the named variable, so a misspelled name
+  # can't silently fall back to a different credential.
+  TOKEN_VAR="$STEWARD_GITHUB_TOKEN_VAR"
+  [[ "$TOKEN_VAR" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "error: STEWARD_GITHUB_TOKEN_VAR='$TOKEN_VAR' is not a valid variable name"; exit 1; }
+  _tok="${!TOKEN_VAR:-}"
+  [[ -n "$_tok" ]] || { echo "error: $TOKEN_VAR is empty or unset — export it, then re-run install.sh"; exit 1; }
+  TOKEN_LABEL="\$$TOKEN_VAR"
+else
+  _tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  TOKEN_LABEL="\$GH_TOKEN or \$GITHUB_TOKEN"
+fi
 if [[ -n "$_tok" ]]; then
   mkdir -p "$(dirname "$ENV_FILE")"
-  ( umask 077; printf 'GITHUB_TOKEN=%s\n' "$_tok" > "$ENV_FILE" )
+  ( umask 077; { echo "# Token snapshotted from $TOKEN_LABEL by install.sh — re-run it to rotate."; printf 'GITHUB_TOKEN=%s\n' "$_tok"; } > "$ENV_FILE" )
   chmod 600 "$ENV_FILE"
-  echo ">> wrote $ENV_FILE (0600) — the tick's gh credential"
+  echo ">> wrote $ENV_FILE (0600) — the tick's gh credential (from $TOKEN_LABEL)"
 elif [[ ! -f "${GH_CONFIG_DIR:-$HOME/.config/gh}/hosts.yml" ]]; then
-  echo "error: gh is authenticated here, but via neither GH_TOKEN/GITHUB_TOKEN nor"
-  echo "       a hosts.yml the service can read. The tick would start unauthenticated."
+  echo "error: gh is authenticated here, but no token is exported"
+  echo "       (looked in $TOKEN_LABEL) and no hosts.yml the service can read exists."
+  echo "       Export a token — or point STEWARD_GITHUB_TOKEN_VAR at a custom"
+  echo "       variable name — then re-run install.sh."
+  echo "       The tick would start unauthenticated."
   exit 1
 else
   ENV_FILE=""   # hosts.yml under $HOME — systemd sets HOME, so gh finds it.
