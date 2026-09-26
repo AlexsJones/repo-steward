@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" width="128" alt="Repo Steward — two interlinked commit rings">
+  <img src="assets/logo.svg" width="128" alt="Repo Steward: two interlinked commit rings, off-white and safety orange, on an ink plate">
 </p>
 
 # Repo Steward
@@ -24,8 +24,12 @@ you give it, and shows its work.
   approval until you flip the live toggle; nothing speaks for you until it has
   earned it.
 - **You are the terminal state** — the steward never merges or closes on its
-  own judgment. Your dashboard click or typed decision is what merges,
+  own judgment. A merge comes from your dashboard click, a typed decision, or
+  a merge rule you wrote down (see [Good to merge](#the-good-to-merge-rule)),
   executed under *your* GitHub auth because *you* acted.
+- **Decides what to build, then builds it** — the Insights sweep ranks open
+  issues by value, readiness and effort; click **Build** on one and the
+  steward implements it and opens a PR.
 - **Decide in a sentence** — type a free-text decision on any escalation and
   press Enter; a focused executor interprets it and carries it out.
 - **Shows its work honestly** — progress and ETAs derive from artifacts on
@@ -33,7 +37,7 @@ you give it, and shows its work.
   queues, staged action texts, token/cost metrics, trends, and uptime cards.
 
 <p align="center">
-  <img src="assets/example.png" width="900" alt="The Repo Steward dashboard: decisions needed, PRs ready for final look, fleet overview, and the next-tick queue">
+  <img src="assets/example.png" width="900" alt="The Repo Steward Operations page: the live top bar with mode, engine, schedule, work queue and tick status, a readout of what waits on you, the repository rail, and the Decisions panel">
 </p>
 
 ## Quick links
@@ -179,59 +183,83 @@ STEWARD_ENGINE=custom STEWARD_ENGINE_CMD='my-agent --prompt "$PROMPT"' ./install
 
 ### The dashboard
 
-- **Run tick now** — starts a tick on demand (refused while one is running).
-  The progress bar is *deterministic*: it counts chunks the tick provably
-  completed (repo ledgers, metrics, dashboard writes — file mtimes, never the
-  model's self-reported position), and the ETA is the median of real per-chunk
-  timings from past ticks (`timings.jsonl`).
-  While a tick is active this becomes **Stop tick**. Stopping requires
-  confirmation, terminates only the tick service, preserves partial local
-  artifacts, and cannot undo actions already posted to GitHub. The cancellation
-  is recorded in the audit log and is never presented as a successful tick.
-- **Decisions needed** — each escalation carries a text box: type what you
-  want done, press Enter. See [Decisions & approvals](#decisions--approvals).
-- **Ready for your final look** — the recommend-to-merge shortlist. Rows are
-  live-checked against GitHub: one you merged/closed yourself drops out, and
-  one whose approval is already posted at the PR's current head shows its age
-  ("✓ approved on GitHub · 5d ago"). **✓ Approve & merge** posts the staged
-  review (if still unposted) and merges the PR — your final look is the
-  terminal decision.
-- **Next tick** — the steward's plan: what it intends to do next tick and why
-  each item is queued, including unfinished conversations it's waiting on.
-  **Activity & trends** is the matching backward view — what it actually did
-  last tick. Together they replace the old in-flight table.
-- **Mode toggle** — flip draft ⇄ live (rewrites `config.yaml`). Stays out of
-  the settings panel on purpose: it doubles as the always-visible DRAFT/LIVE
-  banner.
-- **⚙ Settings** — every other configurable in one panel:
-  - *Schedule* — `Manual only / Hourly / Every 6h / Daily / Weekly`;
-    live-configures the systemd timer. Ticks stay button-triggerable at any
-    cadence.
-  - *Tick size* — the per-run work caps (substantive + light items). Raise
-    for a bigger daily sweep, lower for cheaper, more frequent ticks.
-  - *Watched resources* — per-repo matrix of what the steward tracks
-    (issues / PRs / discussions) and each repo's priority; saves back to the
-    `watch:` lists in `config.yaml`.
-  Everything but the schedule applies from the next tick, so it's safe to
-  change while one is running.
-- **📋 Audit** — links to the [decision log](#the-decision-log) page
-  (`audit.html`, a sibling of the metrics page).
+Every page shares one top bar. On the left are the pages: **Operations**,
+**Insights**, **Evaluation**, **Metrics** and **Audit**. On the right is live
+status: site uptime, **Mode** (LIVE or DRAFT; click to switch, with a
+confirmation), the **Engine** and model, the **Schedule**, and the last
+**Tick** result, or elapsed time while one runs.
 
-Buttons appear only when the page is served by `server.py`; static copies of
-the dashboard are read-only.
+**Work** (or <kbd>w</kbd>, or `/dashboard.html#work`) is the steward's queue:
+what is running now, with each run's latest steps, and what is waiting (typed
+decisions, queued builds, decisions that need your clarification). A tick or
+the decision runner holds the ledgers while it runs, so merges, posts and
+dismissals wait. The cell turns orange and reads **LOCKED**, the affected
+buttons disable with the reason, and Operations shows a banner saying what is
+holding them. Sweeps, evaluations and builds never block a merge.
+
+- **▶ Run tick** starts a tick on demand. While one runs, a progress strip
+  appears under the bar and **■ Stop** replaces the button. The progress is
+  *deterministic*: it counts chunks the tick provably completed (repo ledgers,
+  metrics, dashboard writes, from file mtimes, never the model's self-reported
+  position), and the ETA is the median of real per-chunk timings from past
+  ticks (`timings.jsonl`). Stopping requires confirmation, terminates only the
+  tick service, keeps partial local artifacts, and cannot undo anything already
+  posted to GitHub. The cancellation is recorded in the audit log.
+- **Settings** (or <kbd>,</kbd>) holds everything else. *Engine* switches the
+  CLI for ticks, sweeps and builds. *Schedule* is manual, hourly, every 6 hours,
+  daily or weekly, and live-configures the systemd timer. *Sign-off* toggles
+  the signature on posted comments. *Tick size* sets the per-run work caps.
+  *Watched resources* is the per-repo matrix of issues, PRs and discussions,
+  plus each repo's priority. *Theme* chooses light, dark or the system setting
+  for this browser. Everything except the schedule, sign-off and theme applies
+  from the next tick, so it's safe to change during one.
+
+**Operations** opens with a readout of what waits on you, a repository rail
+(click a repo to focus every panel on it; the orange number is how many items
+need you there) and a row filter (<kbd>/</kbd>). Its panels:
+
+- **Decisions needed**: each escalation has a command line. Type what you
+  want done and press Enter. See [Decisions & approvals](#decisions--approvals).
+- **Ready for your final look**: the recommend-to-merge shortlist, checked live
+  against GitHub. PRs already merged or closed are struck through, and approvals
+  at the current head show their age. **Merge** posts the staged review if it
+  is still unposted, then merges. **Review** shows the staged text, and
+  **Dismiss** drops the item without posting.
+- **Builds**: the Insights build queue, with each build's state and PR.
+- **Staged replies**: everything else the steward drafted. **View** reads it
+  and **Post** sends it under your account.
+- **Next tick** is the plan: what the steward intends to do next and why.
+  **Last tick** is the record of what it actually did.
+
+Panels collapse by clicking their header, and stay that way in this browser.
+
+**Keyboard.** <kbd>g</kbd> then <kbd>o</kbd> / <kbd>i</kbd> / <kbd>e</kbd> /
+<kbd>m</kbd> / <kbd>a</kbd> switches pages. <kbd>j</kbd> and <kbd>k</kbd> move
+between rows, and <kbd>enter</kbd> opens the selected row (Review, View, the
+decision box, a theme's brief, an event's raw JSON). <kbd>/</kbd> filters,
+<kbd>,</kbd> opens settings, <kbd>w</kbd> the work queue, and <kbd>?</kbd> lists every shortcut.
+
+Controls appear only when the page is served by `server.py`; static copies are
+read-only.
 
 ### Decisions & approvals
 
 Everything that touches GitHub under your name happens because you acted, and
 every action lands in the `approvals.jsonl` audit trail:
 
-- **Approve & merge** (Ready table) — executes the staged review via `gh`
+- **Merge** (Ready table) — executes the staged review via `gh`
   under your auth, then merges (method from `merge_method:` in config, else
   the first the repo allows: squash → merge → rebase). Works even in draft
   mode: clicking is you acting. If strict branch protection says the approved
   PR is behind `main`, the same click uses GitHub's update-branch endpoint,
-  then queues auto-merge while the refreshed checks run. This is limited to
-  that explicit click; a background tick never writes to a contributor branch.
+  then queues auto-merge while the refreshed checks run. That result is
+  reported as **queued**, not merged: the row stays in Ready marked *auto-merge
+  queued* until GitHub merges it. If main moves again first, GitHub's
+  auto-merge stalls on the out-of-date branch; the row then reads *queued ·
+  behind main* and the button becomes **Update**. A review staged for a commit
+  the PR has since moved past (a bot re-pin, a rebase) is skipped as superseded
+  rather than posted against the wrong commit. This is limited to that
+  explicit click; a background tick never writes to a contributor branch.
 - **Typed decisions** (Decisions section) — type e.g. *"go with #650, close
   #651 as superseded"* and press Enter. The server records it to
   `decisions.jsonl` and runs `decide.sh`: a focused engine session that
@@ -246,6 +274,28 @@ every action lands in the `approvals.jsonl` audit trail:
 - **Dismiss** — drops a staged item without posting; recorded like everything
   else.
 
+#### The good-to-merge rule
+
+`merge_ready.py` merges without a click, under one standing rule you record
+as a decision: squash-merge a PR when the steward's latest review is an
+approval **on the current head** that ends "Good to merge", GitHub's review
+decision is APPROVED, every check is green, the branch merges cleanly, and it
+is not a critical feature change. A title starting `feat` or marked breaking
+(`!`), or a major-version dependency bump, stays with you.
+
+```bash
+make merge-ready          # dry run: what would merge, and why the rest won't
+make merge-ready MERGE=1  # squash-merge the eligible PRs
+```
+
+It uses `gh` only, with no model and no token cost, and refuses to run during a
+tick or decision run. A branch behind a strict-protection base is updated
+first. Where the repository allows it, GitHub auto-merge then finishes once
+checks pass; otherwise the next run merges it (it remembers the update commit
+in `.merge_ready_updates.json`, so the approval still counts). Every merge is
+logged to `approvals.jsonl` and `audit.jsonl`. Because the phrase now
+triggers a merge, the steward reserves "Good to merge" for PRs that truly are.
+
 ### The decision log
 
 `audit.jsonl` is the append-only, serialisable record of everything anyone
@@ -258,10 +308,10 @@ observed outcomes). Steward events are written as structured lines to
 you see on the dashboard is rendered from the same serialisable events the
 log keeps forever.
 
-**http://localhost:8377/audit.html** is the log's page (📋 Audit on the
-dashboard): totals up top, then every event newest-first grouped by day,
-filterable by actor / event type / repo plus free-text search, failures
-flagged, raw JSON on hover. Two download buttons: the raw `audit.jsonl`
+**http://localhost:8377/audit.html** is the log's page (the **Audit** tab):
+totals up top, then a table of every event newest-first grouped by day,
+filterable by actor / event type / repo / day plus free-text search, failures
+flagged. Click a row (or press <kbd>enter</kbd>) for its raw JSON. Two download buttons: the raw `audit.jsonl`
 (the append-only file itself) or the currently filtered view as CSV.
 
 Schema and event catalogue live in `audit.py`. Other ways to read it:
@@ -292,47 +342,66 @@ duplicates an event).
   snapshots, plus a Δ-since-baseline table, so you can see which repos are
   heating up and whether the backlog is actually shrinking.
 
-### Repository insights
+### Insights: what to build next
 
-Every operational tick snapshots changed ledger items, metrics, and audit
-events into `signals.jsonl`. The source evidence stays separate from the
-steward's bounded analysis, and stable `repo:owner/name` identities make the
-records suitable for a graph-style dashboard.
+The Insights page ranks what is most worth building across every configured
+repository. Start a sweep with **Run build sweep** at the top of the page, or
+`make insights`. It has three steps:
 
-Run `make insights` to start a separate, read-only insight sweep. It makes no
-GitHub calls or queue changes. The sweep groups recurring themes and suggests
-potential investments, then `insights.py` rejects any result that cites an
-unknown signal, crosses repository evidence, or claims recurrence without
-enough distinct items. Valid output is published atomically to `insights.json`
-and served at `GET /api/insights`. Insight scheduling remains manual until it
-is exposed as an explicit dashboard setting.
-Sweeps time out after ten minutes by default so a stalled model preserves the
-last published graph; override with `STEWARD_INSIGHTS_TIMEOUT_SEC` when running
-`make insights` if needed.
+1. `insights.py prepare` reads the open issues and PRs from GitHub (read-only,
+   with `gh`, and no model). It pre-ranks the issues on reactions,
+   participants, recency, labels and repository priority, then fetches the
+   full threads of the strongest ~50.
+2. One model session follows `INSIGHTS.md` and writes a ranked list of
+   **themes**. A theme is one buildable change grounded in one or more open
+   issues, with a value score, readiness (`ready` / `needs-design` /
+   `blocked`), effort, build cost, risk, and a build brief (goal, acceptance
+   criteria, likely files, open questions). A single well-specified request can
+   rank first. It does not need to recur across several issues.
+3. `insights.py publish` rejects any theme that cites an issue or PR missing
+   from the snapshot, then publishes `insights.json`. Issue titles, links and
+   counts shown on the page are copied from the snapshot, not from the model.
 
-Open **http://localhost:8377/insights.html** for the graph workspace. Its fleet
-view expands each repository into evidence-backed theme and potential-idea
-nodes. Selecting, deferring, or dismissing an idea records local maintainer
-intent in `insight-decisions.jsonl` and the unified audit log. A selected idea
-enters `proactive.json`; after the primary queue requirements are satisfied, a
-tick may investigate it, write a local proposal, or open a steward PR. When an
-investigation produces a proposal, the canvas exposes it as an explicit
-decision point: **Nominate for build** puts that bounded proposal back into the
-next eligible tick with implementation intent. The steward must then create a
-branch, run relevant tests, and open a PR rather than silently stopping at
-another analysis pass. Selection or nomination never authorizes a merge, close,
-or roadmap commitment. A persistent **Build & investigation queue** above the
-canvas shows nominated investigations, proposals awaiting nomination, active
-builds, blockers, and open PRs across every configured repository.
+A sweep only runs when started, and times out after 20 minutes by default
+(`STEWARD_INSIGHTS_TIMEOUT_SEC`). A failed or rejected run leaves the last
+published list in place.
+
+**Build.** Open a theme and click **Build**. `build.sh` then runs one steward
+session per queued theme, following `BUILD.md`. The session works in its own
+clone under `work/builds/`, on branch `steward/build-<key>`, implements the
+brief, runs the repository's tests, and opens a PR. It opens a draft PR if
+something still fails. If an open question would change the design, it stops
+and reports it instead of guessing. Builds never merge: merging stays with you
+or `merge_ready.py`. The queue and results live in `builds.json` and are shown
+on each theme. Output goes to `logs/build.log`, and runs launch as the
+transient unit `repo-steward-build.service`. A build does not wait for a tick,
+and ticks do not run builds.
+
+This sweep and the self-evaluation below are independent of each other and of
+ticks: each holds its own lock (`.insights.lock` / `.evaluation.lock`), so a
+second start of the same job is refused whether it came from the dashboard or
+`make`. Dashboard runs launch as the transient user unit
+`repo-steward-insights.service` or `repo-steward-evaluation.service` with the
+tick's engine settings, so they survive a dashboard restart; output goes to
+`logs/insights.log` and `logs/evaluation.log`, and the button shows the last
+outcome.
+
+A running job can be stopped with **Cancel** beside its button, whether it was
+started from the dashboard or with `make` — the script records its pid in the
+lock, so a `make` run is signalled directly. Cancelling discards the run and
+leaves the last published result in place. A running tick has the same control:
+**Stop tick** appears next to the run button on the Operations page. Stopping a
+tick is an interruption rather than a pause — finished work stands, work in
+flight is lost, the board is not refreshed, and the audit log records it.
 
 ### Steward self-evaluation
 
-Run `make evaluate` to start a separate critical review of earlier steward
-judgments against later maintainer actions, contributor responses, and
-repository outcomes. It is read-only with respect to GitHub and the operational
-queue. Findings must cite the original steward event plus later evidence;
-silence is never treated as validation, and the steward's own approval is not
-independent review.
+Start a separate critical review of earlier steward judgments against later
+maintainer actions, contributor responses, and repository outcomes with **Run
+self-evaluation** at the top of the Evaluation page, or `make evaluate`.
+It is read-only with respect to GitHub and the operational queue. Findings must
+cite the original steward event plus later evidence; silence is never treated as
+validation, and the steward's own approval is not independent review.
 
 Validated reports are retained in `evaluations.jsonl`, with the latest in
 `evaluation.json`. A bounded set of finding-backed, repository-specific lessons
@@ -344,8 +413,8 @@ cannot override current evidence or guardrails. View the dedicated section at
 
 Add a `sites:` block to config.yaml (see the example) and the installer
 enables a token-free probe (`uptime_check.py`, every 5 minutes). Sites get
-live status chips on the dashboard and 24h-uptime/latency cards on the
-metrics page. A site is declared down after two consecutive failed probes;
+a status dot each in the top bar's **Sites** cell (a down site is named in red)
+and 24h-uptime/latency cards on the metrics page. A site is declared down after two consecutive failed probes;
 the transition is logged to `incidents.jsonl` and escalated, and the next
 steward tick investigates the linked repo (recent commits, failed deploy
 workflows) — probes cost nothing, tokens are only spent when something
@@ -358,8 +427,8 @@ actually breaks.
 ### How it works
 
 ```
-systemd timer (hourly)                      you, on the dashboard
-        │                                   type a decision ⏎ / ✓ approve & merge
+systemd timer or ▶ Run tick                 you, on the dashboard
+        │                                   type a decision ⏎ / merge / build
         ▼                                                │
 tick.sh ── drains typed decisions first                  ▼
         │                                   server.py (systemd, port 8377)
@@ -377,6 +446,11 @@ claude -p "execute one steward tick"        spawns decide.sh when idle
         └─ snapshot changed evidence into signals.jsonl for later insights
 ```
 
+Alongside the tick, three paths run on their own schedule, or when you ask:
+`insights.sh` (read GitHub, rank build candidates), `build.sh` (implement a
+theme you clicked **Build** on and open a PR), and `merge_ready.py` (merge
+what the good-to-merge rule allows).
+
 There is no daemon and no database: continuity comes from plain JSON ledgers
 in `state/`, so every tick is a fresh, stateless session that picks up exactly
 where the last one stopped. Everything is inspectable and editable with a text
@@ -385,9 +459,10 @@ editor.
 ### Guardrails
 
 - **The steward never merges, closes, or force-pushes on its own judgment.**
-  Terminal states belong to you — reached only through your ✓ Approve & merge
-  click or an explicit typed decision, both executed by `server.py` under your
-  auth and logged to `approvals.jsonl`. For the agent sessions themselves the
+  Terminal states belong to you — reached only through your **Merge** click,
+  an explicit typed decision, or the good-to-merge rule you recorded, all
+  executed outside the agent under your auth and logged to `approvals.jsonl`.
+  Builds open PRs and never merge them. For the agent sessions themselves the
   verbs are denied at the Claude Code permission layer
   (`.claude/settings.json`), not just in the prompt.
 - **Draft mode first.** Out of the box, nothing is posted to GitHub — every
@@ -413,15 +488,19 @@ running install generates is gitignored (per-maintainer state). The tracked set:
 |---|---|---|
 | `STEWARD.md` | the tick playbook the agent follows — edit to change behavior | yes |
 | `server.py` | dashboard server + approve / decide / terminal / tick API | yes |
-| `steward-controls.js` | dashboard buttons, decision boxes + repo filter lens | yes |
+| `assets/steward.css` | the one design system every page uses: tokens, light and dark themes, tables, controls | yes |
+| `assets/steward-shell.js` | the shared top bar: navigation, live status, run/stop tick, mode, settings, keyboard shortcuts, dialogs | yes |
+| `steward-controls.js` | Operations page behaviour: repo and text filters, decisions, merge/dismiss/post, collapsible panels | yes |
 | `tick.sh` | headless-agent wrapper each tick runs through; captures usage + chunk timings | yes |
 | `decide.sh` | the decision executor `server.py`/`tick.sh` spawn for typed decisions | yes |
 | `audit.py` | decision-log schema, append/read helpers, history backfill | yes |
 | `signals.py` | deterministic, deduplicating evidence collector for repository insights | yes |
-| `insights.py` · `INSIGHTS.md` · `insights.sh` | prepare, analyze, and validate the read-only insight graph | yes |
-| `proactive.py` | materializes selected canvas ideas into the subordinate work queue | yes |
+| `insights.py` · `INSIGHTS.md` · `insights.sh` | GitHub fetch, ranking playbook, and validated publish for the build-candidate sweep | yes |
+| `builds.py` · `BUILD.md` · `build.sh` | the Build button's queue, playbook, and runner (implements a theme, opens a PR) | yes |
+| `merge_ready.py` | squash-merges PRs the steward signed off "Good to merge" that are not feature changes (`--merge`; dry run by default) | yes |
+| `proactive.py` | retired idea-canvas queue; ticks still honour items already in `proactive.json` | yes |
 | `evaluation.py` · `EVALUATION.md` · `evaluate.sh` | critically compare prior judgments with later outcomes and derive lessons | yes |
-| `insights.html` · `evaluation.html` · `metrics.html` · `audit.html` | graph, self-evaluation, metrics, and decision-log pages | yes |
+| `insights.html` · `evaluation.html` · `metrics.html` · `audit.html` | build candidates, self-evaluation, metrics, and decision-log pages | yes |
 | `uptime_check.py` | token-free site probe the uptime timer runs | yes |
 | `install.sh` | generates the systemd user units | yes |
 | `Makefile` | convenience verbs over the units — `make help` | yes |
@@ -442,8 +521,8 @@ Generated per install, never committed:
 | `audit.jsonl` · `activity.jsonl` | the unified decision log + the current run's slice of it | no |
 | `metrics.jsonl` · `usage.jsonl` · `timings.jsonl` | snapshots, token/cost envelopes, per-chunk tick timings | no |
 | `signals.jsonl` | append-only item, activity, and metric evidence with stable graph identities | no |
-| `insights-input.json` · `insights.candidate.json` · `insights.json` | bounded sweep context, untrusted candidate, and validated graph | no |
-| `insight-decisions.jsonl` | append-only maintainer posture on canvas idea nodes | no |
+| `insights-input.json` · `insights.candidate.json` · `insights.json` | GitHub snapshot, untrusted candidate, and validated ranked themes | no |
+| `builds.json` · `builds/` | build queue and per-build briefs and results | no |
 | `proactive.json` · `proposals/` | selected-idea workflow state and local investigation briefs | no |
 | `evaluation-input.json` · `evaluation.candidate.json` · `evaluation.json` | bounded evaluation context, untrusted candidate, and validated report | no |
 | `evaluations.jsonl` · `lessons.json` | evaluation history and current evidence-backed tick guidance | no |
@@ -509,6 +588,9 @@ The `make` targets wrap the systemd user units — run `make help` for the list:
 ```bash
 make status      # dashboard / tick / timer state at a glance
 make tick        # one tick, now
+make insights    # rank what is worth building (GitHub read + one model session)
+make build       # run builds queued from the Insights page
+make merge-ready # dry run of the good-to-merge rule (MERGE=1 to act)
 make timer-off   # pause scheduled ticks (dashboard stays up)
 make timer-on    # resume them
 make logs        # tail the tick log
@@ -526,7 +608,8 @@ Each tick is a headless Claude Code session doing real review work — budget
 accordingly. The defaults (hourly, 4 substantive + 12 light items) suit an
 actively maintained portfolio; quiet repos cost almost nothing since a
 no-change tick exits after the sync. Typed decisions spawn small focused
-sessions, tracked in the same usage ledger. Lengthen the cadence or shrink
+sessions, tracked in the same usage ledger. A build-candidate sweep costs about
+one tick (roughly $2 on Opus), as does each Build; `merge_ready.py` is free. Lengthen the cadence or shrink
 `limits` for a lighter footprint.
 
 ## License

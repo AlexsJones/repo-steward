@@ -4,69 +4,191 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Insights · Repo Steward</title>
-  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/logo-256.png">
+  <link rel="stylesheet" href="/assets/steward.css">
   <style>
-    :root{--bg:#EFF2F0;--panel:#FBFCFB;--panel2:#F3F6F4;--ink:#1C2321;--muted:#5C6B66;--line:#D8DFDB;--accent:#175E54;--accent2:#398273;--soft:#E3EEEB;--ok:#0B7D5E;--oksoft:#DFF0E9;--warn:#A66A1E;--warnsoft:#F5ECDC;--crit:#A32F26;--critsoft:#F6E3E1;--shadow:0 8px 28px rgba(20,40,34,.09)}
-    @media(prefers-color-scheme:dark){:root{--bg:#111614;--panel:#181F1C;--panel2:#1D2622;--ink:#E4EAE7;--muted:#8CA097;--line:#2A342F;--accent:#4FB39F;--accent2:#78C5B5;--soft:#1B322D;--ok:#39B990;--oksoft:#14302A;--warn:#D19A4A;--warnsoft:#33281A;--crit:#E0736A;--critsoft:#37211F;--shadow:0 8px 30px rgba(0,0,0,.25)}}
-    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif} button{font:inherit;color:inherit} a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-    header{height:66px;padding:0 22px;display:flex;align-items:center;gap:16px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--bg) 88%,transparent);position:sticky;top:0;z-index:10;backdrop-filter:blur(12px)}
-    h1{font:600 23px "Iowan Old Style",Palatino,Georgia,serif;margin:0}.crumb{font-size:12px;color:var(--muted)}.spacer{flex:1}.chip{border-radius:999px;background:var(--panel2);color:var(--muted);padding:4px 9px;font:600 11px ui-monospace,Menlo,monospace}.nav{font:600 12px ui-monospace,Menlo,monospace}
-    .shell{display:grid;grid-template-columns:minmax(0,1fr) 360px;height:calc(100vh - 66px)}.workspace{position:relative;overflow:auto;padding:24px}.toolbar{display:flex;align-items:center;gap:8px;margin-bottom:18px;position:sticky;left:0}.tool{border:1px solid var(--line);background:var(--panel);border-radius:7px;padding:7px 11px;cursor:pointer}.tool:hover{border-color:var(--accent)}.tool[disabled]{opacity:.45;cursor:default}.hint{color:var(--muted);font-size:12px;margin-left:6px}
-    .canvas{position:relative;min-height:720px;min-width:880px;border:1px solid var(--line);border-radius:14px;background-color:var(--panel2);background-image:radial-gradient(var(--line) .7px,transparent .7px);background-size:18px 18px;overflow:hidden}.edges{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}.edge{fill:none;stroke:var(--line);stroke-width:1.5}.edge.idea{stroke:color-mix(in srgb,var(--accent) 40%,var(--line));stroke-dasharray:4 4}
-    .node{position:absolute;width:210px;text-align:left;border:1px solid var(--line);border-radius:11px;background:var(--panel);padding:12px 13px;box-shadow:0 2px 8px rgba(20,40,34,.05);cursor:pointer;transition:transform .14s,border-color .14s,box-shadow .14s,opacity .14s}.node:hover,.node.active{transform:translateY(-2px);border-color:var(--accent);box-shadow:var(--shadow)}.node .kind{display:block;color:var(--muted);font:600 10px ui-monospace,Menlo,monospace;text-transform:uppercase;letter-spacing:.07em}.node strong{display:block;margin:4px 0 3px;font-size:13px}.node small{display:block;color:var(--muted);line-height:1.35}.node.repo{width:220px;border-width:2px}.node.repo strong{font:600 15px ui-monospace,Menlo,monospace}.node.theme{width:230px}.node.idea{width:220px;background:color-mix(in srgb,var(--panel) 88%,var(--soft))}.node.selected{border-color:var(--ok);background:var(--oksoft)}.node.deferred{border-color:var(--warn);background:var(--warnsoft)}.node.dismissed{opacity:.42}.state{display:inline-block;margin-top:7px;border-radius:99px;padding:2px 7px;background:var(--panel2);font:600 10px ui-monospace,Menlo,monospace}.posture-heating{color:var(--crit)}.posture-cooling{color:var(--ok)}.posture-stable{color:var(--accent)}
-    .overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:18px;padding:38px}.overview .node{position:relative;left:auto!important;top:auto!important;width:auto;min-height:120px}.empty{padding:70px 30px;text-align:center;color:var(--muted)}
-    aside{border-left:1px solid var(--line);background:var(--panel);overflow:auto;padding:22px}aside h2{font-size:17px;margin:5px 0 8px}aside h3{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:24px 0 8px}.detail-copy{color:var(--muted);margin:0}.facts{display:flex;flex-wrap:wrap;gap:6px}.evidence{display:block;border:1px solid var(--line);background:var(--panel2);border-radius:8px;padding:9px 10px;margin:7px 0}.evidence b{display:block;font-size:12px}.evidence span{display:block;font-size:11px;color:var(--muted);margin-top:3px}.actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:15px}.actions.build{grid-template-columns:1fr auto auto}.action{border:1px solid var(--line);background:var(--panel2);border-radius:7px;padding:7px 5px;cursor:pointer;font-size:12px}.action:hover{border-color:var(--accent)}.action.select{color:var(--ok)}.action.nominate{background:var(--accent);border-color:var(--accent);color:var(--panel);font-weight:700;padding:9px}.action.defer{color:var(--warn)}.action.dismiss{color:var(--crit)}.reset{display:block;margin-top:10px;border:0;background:transparent;color:var(--muted);font-size:11px;cursor:pointer}.decision-note,.build-step{margin-top:10px;padding:10px;border-radius:7px;background:var(--soft);color:var(--accent);font-size:12px}.build-step strong{display:block;color:var(--ink);margin-bottom:3px}.proposal-link{display:inline-block;margin-top:7px;font-weight:700;color:var(--accent)}
-    @media(max-width:900px){.shell{grid-template-columns:1fr;height:auto}.workspace{min-height:650px}.canvas{min-width:880px}aside{border-left:0;border-top:1px solid var(--line);min-height:320px}}
+    .split { margin: 0 -20px; border-top: 1px solid var(--line); }
+    .list { padding: 14px 20px 40px; min-width: 0; }
+    .toolbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+    .pulses { border-top: 1px solid var(--line); }
+    .pulses div { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 10px; padding: 6px 12px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 12px; color: var(--ink-2); }
+    .pulses div:hover, .pulses div.on { background: var(--panel-2); }
+    .pulses div.on b { box-shadow: inset 3px 0 0 var(--signal); padding-left: 6px; }
+    .pulses b { font: 600 11.5px var(--mono); color: var(--ink); }
+    #themes td.rank { width: 1%; font: 700 15px var(--mono); color: var(--muted); text-align: right; }
+    #themes tr[data-nav] { cursor: pointer; }
+    #themes .sub { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    th[data-sort] { cursor: pointer; }
+    th[data-sort]:hover { color: var(--ink); }
+    th.sorted::after { content: " ↓"; color: var(--signal); }
+    .pane .build { margin-top: 18px; border: 2px solid var(--rule); }
+    .pane .build header { padding: 8px 12px; background: var(--ink); color: var(--bg); font: 700 10.5px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+    .pane .build .in { padding: 12px; }
+    .pane .build p { margin: 0 0 10px; font-size: 12.5px; }
+    .pane .result { margin-top: 10px; font-size: 12.5px; }
+    .pane .result a { font-family: var(--mono); font-weight: 600; }
+    .pane .intro { color: var(--ink-2); line-height: 1.6; }
+    .pane .intro ol { padding-left: 18px; }
   </style>
-  <link rel="stylesheet" href="/assets/site-nav.css">
 </head>
-<body>
-  <header class="site-header"><h1>Insights canvas</h1><span class="crumb">repository → theme → potential idea</span><span class="spacer"></span><span class="chip" id="stamp">loading</span><nav class="site-nav" aria-label="Primary navigation"><a href="/dashboard.html">Operations</a><a href="/insights.html" aria-current="page">Insights</a><a href="/evaluation.html">Self-evaluation</a><a href="/metrics.html">Metrics</a><a href="/audit.html">Audit</a></nav></header>
-  <div class="shell">
-    <main class="workspace">
-      <div class="toolbar"><button class="tool" id="back" disabled>← All repositories</button><span class="hint" id="hint">Choose a repository to explore its evidence graph.</span></div>
-      <div class="canvas overview" id="canvas"><div class="empty">Loading the insight graph…</div></div>
-    </main>
-    <aside id="detail"><span class="chip">Evidence-backed</span><h2>Select a node</h2><p class="detail-copy">Repository nodes open their current themes. Theme and idea nodes show the signals supporting them.</p></aside>
-  </div>
+<body data-page="insights">
+  <main class="page" style="padding-bottom:0">
+    <div class="page-head"><h1>Insights</h1><span class="sub" id="stamp">what is worth building next</span>
+      <div class="tools"><span data-analysis-job="insights"></span></div></div>
+    <div class="split">
+      <div class="list">
+        <div class="readout" id="readout"></div>
+        <section class="panel">
+          <div class="panel-head"><h2>Build candidates</h2><span class="count" id="count"></span><span class="hint">ranked by value, readiness and effort</span></div>
+          <div class="toolbar">
+            <select class="field" id="repo" aria-label="Repository"><option value="">all repositories</option></select>
+            <select class="field" id="ready" aria-label="Readiness"><option value="">any readiness</option><option>ready</option><option>needs-design</option><option>blocked</option></select>
+            <input class="field" id="q" type="search" data-filter-input placeholder="filter themes  /" style="flex:1;min-width:160px">
+          </div>
+          <div class="tablewrap"><table class="grid" id="themes"><thead><tr>
+            <th data-sort="rank" class="sorted">#</th><th>Theme</th><th data-sort="value">Value</th><th data-sort="readiness">Ready</th><th data-sort="effort">Effort</th><th>Cost</th><th>State</th>
+          </tr></thead><tbody id="rows"><tr><td colspan="7" class="empty">loading…</td></tr></tbody></table></div>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>Repository pulse</h2></div>
+          <div class="pulses" id="pulses"></div>
+        </section>
+        <section class="panel" id="builds-panel" hidden>
+          <div class="panel-head"><h2>Earlier builds</h2><span class="count" id="builds-count"></span><span class="hint">themes no longer in the current list</span></div>
+          <div class="tablewrap"><table class="grid"><thead><tr><th>Repo</th><th>Theme</th><th>State</th><th>PR</th><th>When</th></tr></thead><tbody id="builds"></tbody></table></div>
+        </section>
+      </div>
+      <aside class="pane" id="detail"></aside>
+    </div>
+  </main>
+  <script src="/assets/steward-shell.js"></script>
   <script>
   (function(){
-    var graph=null,evidence={},decisions={},work={},focused=null,active=null;
-    var canvas=document.getElementById('canvas'),detail=document.getElementById('detail'),back=document.getElementById('back'),hint=document.getElementById('hint');
-    function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
-    function short(name){return name.split('/').pop()}
-    function workLabel(w,d){if(w){return {selected:'investigation queued','in-progress':'in progress','ready-for-maintainer':'proposal ready',nominated:'build queued','pr-open':'PR open',blocked:'blocked',done:'done'}[w.status]||w.status}return d?({select:'investigation selected',nominate:'build nominated'}[d.action]||d.action):''}
-    function node(tag,cls,id,kind,title,sub,state){var el=document.createElement(tag);el.className='node '+cls;el.dataset.id=id;el.innerHTML='<span class="kind">'+esc(kind)+'</span><strong>'+esc(title)+'</strong><small>'+esc(sub||'')+'</small>'+(state?'<span class="state">'+esc(state)+'</span>':'');el.addEventListener('click',function(e){e.stopPropagation();select(id)});return el}
-    function repoById(id){return graph.repositories.filter(function(r){return r.id===id||r.name===id})[0]}
-    function findNode(id){for(var r of graph.repositories){if(r.id===id)return {type:'repo',repo:r,node:r};for(var t of r.themes){if(t.id===id)return {type:'theme',repo:r,node:t};for(var i of t.ideas){if(i.id===id)return {type:'idea',repo:r,theme:t,node:i}}}}}
-    function renderOverview(){focused=null;active=null;back.disabled=true;canvas.className='canvas overview';canvas.style.height='';canvas.innerHTML='';hint.textContent='Choose a repository to explore its evidence graph.';for(var r of graph.repositories){var n=node('button','repo posture-'+r.posture,r.id,'Repository · '+r.posture,short(r.name),r.themes.length+' themes · '+r.themes.reduce(function(a,t){return a+t.ideas.length},0)+' ideas',r.posture);canvas.appendChild(n)}if(!graph.repositories.length)canvas.innerHTML='<div class="empty">No repository insights have been published yet.</div>';showIntro()}
-    function renderRepo(repo){
-      focused=repo;active=repo.id;back.disabled=false;canvas.className='canvas';
-      canvas.innerHTML='<svg class="edges" aria-hidden="true"></svg>';
-      hint.textContent=repo.name+' · click any node to inspect its evidence';
-      var blocks=repo.themes.map(function(t){return Math.max(140,(t.ideas||[]).length*112+28)}), contentHeight=blocks.reduce(function(a,b){return a+b},0),height=Math.max(720,contentHeight+50),cursor=(height-contentHeight)/2;
-      canvas.style.height=height+'px';
-      var repoY=Math.max(45,height/2-55),rn=node('button','repo posture-'+repo.posture,repo.id,'Repository · '+repo.posture,short(repo.name),repo.summary,repo.posture);
-      place(rn,35,repoY);canvas.appendChild(rn);
-      repo.themes.forEach(function(t,ti){
-        var blockTop=cursor,blockHeight=blocks[ti],ty=blockTop+blockHeight/2-48,tn=node('button','theme',t.id,'Theme · '+t.state,t.title,t.distinct_items+' distinct items',t.confidence+' confidence');
-        place(tn,310,ty);canvas.appendChild(tn);edge(255,repoY+52,310,ty+48,'');
-        var ideas=t.ideas||[],ideasHeight=ideas.length*112,ideaTop=blockTop+(blockHeight-ideasHeight)/2;
-        ideas.forEach(function(i,ii){var iy=ideaTop+ii*112,decision=decisions[i.id],queued=work[i.id],classes={select:'selected',nominate:'selected',defer:'deferred',dismiss:'dismissed'},cls='idea '+(decision?(classes[decision.action]||''):'');var n=node('button',cls,i.id,'Idea · '+i.state,i.title,i.scope,workLabel(queued,decision));place(n,615,iy);canvas.appendChild(n);edge(540,ty+48,615,iy+45,'idea')});
-        cursor+=blockHeight;
-      });
-      select(repo.id)
+    var S=Steward,esc=S.esc,graph=null,builds={},active=null,sortKey='rank',poll=null;
+    var $=function(id){return document.getElementById(id)};
+    var STATUS={queued:['info','queued'],building:['info','building'],'pr-open':['ok','PR open'],blocked:['warn','blocked'],failed:['crit','failed']};
+    var READY={ready:['ok','ready'],'needs-design':['warn','design'],blocked:['crit','blocked']};
+    var ORDER={ready:0,'needs-design':1,blocked:2},EFFORT={tiny:0,small:1,medium:2,large:3};
+    function short(n){return String(n||'').split('/').pop()}
+    function meter(n){return '<span class="meter" title="value '+n+'/5">'+'■■■■■'.slice(0,n)+'<i>'+'■■■■■'.slice(0,5-n)+'</i></span>'}
+    function st(pair,text){return '<span class="st '+pair[0]+'">'+esc(text||pair[1])+'</span>'}
+    function buildChip(b){return b?st(STATUS[b.status]||['',b.status]):'<span class="muted">·</span>'}
+    function busy(){return Object.keys(builds).some(function(k){return builds[k].status==='queued'||builds[k].status==='building'})}
+
+    function intro(){
+      $('detail').innerHTML='<span class="label">How this works</span><h2>Pick a theme, then build it</h2><div class="intro"><ol>'+
+        '<li><b>Run build sweep</b> reads every open issue and PR from GitHub, then ranks what is worth building.</li>'+
+        '<li>A theme is one buildable change grounded in open issues, with a brief: goal, acceptance criteria, likely files and open questions.</li>'+
+        '<li><b>Build</b> runs one steward session. It implements the brief in its own clone, runs the tests and opens a PR. It never merges.</li></ol>'+
+        '<p class="muted">Keys: <kbd>j</kbd> <kbd>k</kbd> move, <kbd>enter</kbd> open, <kbd>/</kbd> filter.</p></div>';
     }
-    function place(el,x,y){el.style.left=x+'px';el.style.top=y+'px'}
-    function edge(x1,y1,x2,y2,cls){var svg=canvas.querySelector('svg'),ns='http://www.w3.org/2000/svg',p=document.createElementNS(ns,'path'),mid=(x1+x2)/2;p.setAttribute('class','edge '+cls);p.setAttribute('d','M'+x1+' '+y1+' C'+mid+' '+y1+' '+mid+' '+y2+' '+x2+' '+y2);svg.appendChild(p)}
-    function evidenceHtml(ids){if(!ids||!ids.length)return '<p class="detail-copy">No item evidence attached.</p>';return ids.map(function(id){var s=evidence[id]||{},ev=(s.evidence||[])[0]||{},a=s.attributes||{},label=ev.label||a.title||id,url=ev.url||'';return '<a class="evidence" '+(url?'href="'+esc(url)+'" target="_blank" rel="noopener"':'')+'><b>'+esc(label)+'</b><span>'+esc((s.subject||{}).ref||s.kind||id)+' · '+esc((s.source||{}).updated_at||(s.source||{}).occurred_at||'')+'</span></a>'}).join('')}
-    function select(id){active=id;canvas.querySelectorAll('.node').forEach(function(n){n.classList.toggle('active',n.dataset.id===id)});var f=findNode(id);if(!f)return;if(f.type==='repo'&&!focused){renderRepo(f.repo);return}var n=f.node,html='<span class="chip">'+esc(f.type)+(n.state?' · '+esc(n.state):'')+'</span><h2>'+esc(n.title||short(n.name))+'</h2><p class="detail-copy">'+esc(n.summary||n.problem||'')+'</p>';if(f.type==='idea'){html+='<h3>Why this idea</h3><p class="detail-copy">'+esc(n.rationale)+'</p><h3>Scope and risk</h3><p class="detail-copy"><b>Scope:</b> '+esc(n.scope)+'<br><b>Risk:</b> '+esc(n.risk)+'<br><b>Next:</b> '+esc(n.suggested_next_action)+'</p>';var d=decisions[n.id],w=work[n.id],ready=w&&w.status==='ready-for-maintainer',nominated=w&&w.status==='nominated';if(ready){html+='<div class="build-step"><strong>Investigation complete — your next decision</strong>This proposal will not enter the implementation queue until you nominate it.'+(w.proposal_path?'<br><a class="proposal-link" href="/'+esc(w.proposal_path)+'" target="_blank">Read proposal ↗</a>':'')+'</div><div class="actions build"><button class="action nominate" data-action="nominate">Nominate for build</button><button class="action defer" data-action="defer">Defer</button><button class="action dismiss" data-action="dismiss">Dismiss</button></div>'}else if(nominated){html+='<div class="build-step"><strong>Nominated for build</strong>Eligible for the next tick after the primary repository queue. The steward will implement the bounded proposal and open a PR.</div>'}else{html+='<div class="actions"><button class="action select" data-action="select">Select to investigate</button><button class="action defer" data-action="defer">Defer</button><button class="action dismiss" data-action="dismiss">Dismiss</button></div>'}html+=(d?'<div class="decision-note">Decision: <b>'+esc(({select:'selected for investigation',nominate:'nominated for build'}[d.action]||d.action))+'</b>'+(d.note?' · '+esc(d.note):'')+(w?'<br>Stage: <b>'+esc(workLabel(w,d))+'</b>':'')+'</div><button class="reset" data-action="reset">Reset decision</button>':'')}
-      if(f.type!=='repo')html+='<h3>Supporting evidence</h3>'+evidenceHtml(n.signal_ids);detail.innerHTML=html;detail.querySelectorAll('[data-action]').forEach(function(b){b.addEventListener('click',function(){decide(n,b.dataset.action)})})}
-    function decide(idea,action){var note='';if(action==='defer')note=prompt('Optional: what should trigger reconsideration?','')||'';if(action==='nominate'&&!confirm('Nominate this proposal for implementation? The next eligible tick will create a branch, run relevant tests, and open a PR. It will never merge it.'))return;fetch('/api/insight-decision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idea_id:idea.id,action:action,note:note})}).then(function(r){return r.json().then(function(x){if(!r.ok)throw new Error(x.error||'request failed');return x})}).then(function(x){decisions=x.decisions||{};work=x.proactive||{};renderRepo(focused);select(idea.id)}).catch(function(e){alert(e.message)})}
-    function showIntro(){detail.innerHTML='<span class="chip">Evidence-backed</span><h2>Select a node</h2><p class="detail-copy">Repository nodes open their current themes. Theme and idea nodes show the signals supporting them.</p>'}
-    back.addEventListener('click',renderOverview);canvas.addEventListener('click',function(e){if(e.target===canvas&&focused)select(focused.id)});
-    fetch('/api/insights').then(function(r){return r.json()}).then(function(x){graph=x.insights;evidence=x.evidence||{};decisions=x.decisions||{};work=x.proactive||{};if(!graph){canvas.innerHTML='<div class="empty">No validated insight graph yet.<br>Run <code>make insights</code> after collecting signals.</div>';return}document.getElementById('stamp').textContent='generated '+graph.generated_at.replace('T',' ').replace('Z',' UTC');renderOverview();var params=new URLSearchParams(location.search),wanted=params.get('repo'),repo=graph.repositories.filter(function(r){return r.name===wanted||r.id===wanted||short(r.name)===wanted})[0];if(repo){renderRepo(repo);var wantedNode=params.get('node');if(wantedNode&&findNode(wantedNode))select(wantedNode)}}).catch(function(){canvas.innerHTML='<div class="empty">Could not load the insight graph.</div>'});
+
+    function filtered(){
+      var repo=$('repo').value,ready=$('ready').value,q=$('q').value.trim().toLowerCase();
+      var rows=(graph?graph.themes:[]).filter(function(t){
+        if(repo&&t.repo!==repo)return false;
+        if(ready&&t.readiness!==ready)return false;
+        return !q||[t.title,t.summary,t.repo,t.kind].join(' ').toLowerCase().indexOf(q)!==-1;
+      });
+      var key={rank:function(t){return t.rank},value:function(t){return -t.value_score*10+t.rank/100},
+        readiness:function(t){return ORDER[t.readiness]*100+t.rank},effort:function(t){return EFFORT[t.effort]*100+t.rank}}[sortKey];
+      return rows.sort(function(a,b){return key(a)-key(b)});
+    }
+
+    function render(){
+      if(!graph){
+        $('rows').innerHTML='<tr><td colspan="7" class="empty">No build-candidate list yet. Use Run build sweep above, or make insights.</td></tr>';
+        $('readout').innerHTML='';renderBuilds();return;
+      }
+      var all=graph.themes,rows=filtered();
+      $('readout').innerHTML=[['Themes',all.length],['Ready to build',all.filter(function(t){return t.readiness==='ready'}).length,true],
+        ['Needs design',all.filter(function(t){return t.readiness==='needs-design'}).length],
+        ['Building',Object.keys(builds).filter(function(k){return /queued|building/.test(builds[k].status)}).length],
+        ['PRs opened',Object.keys(builds).filter(function(k){return builds[k].status==='pr-open'}).length],
+        ['Repos covered',new Set(all.map(function(t){return t.repo})).size]]
+        .map(function(c){return '<div class="'+(c[2]&&c[1]?'sig':'')+'"><span class="label">'+c[0]+'</span><b>'+c[1]+'</b></div>'}).join('');
+      $('count').textContent=rows.length===all.length?all.length:rows.length+'/'+all.length;
+      $('rows').innerHTML=rows.map(function(t){
+        return '<tr data-nav data-id="'+esc(t.id)+'"'+(active===t.id?' class="sel"':'')+'><td class="rank">'+t.rank+'</td>'+
+          '<td><span class="title">'+esc(t.title)+'</span><span class="sub">'+esc(t.summary)+'</span>'+
+          '<span class="sub"><span class="tag">'+esc(short(t.repo))+'</span> <span class="tag">'+esc(t.kind)+'</span> '+
+          t.issues.map(function(n){return '<span class="tag">#'+n+'</span>'}).join(' ')+'</span></td>'+
+          '<td class="w-id">'+meter(t.value_score)+'</td><td class="w-id">'+st(READY[t.readiness]||['',t.readiness])+'</td>'+
+          '<td class="w-id mono">'+esc(t.effort)+'</td><td class="w-id mono">'+esc(t.build_cost)+'</td><td class="w-id">'+buildChip(builds[t.id])+'</td></tr>'
+      }).join('')||'<tr><td colspan="7" class="empty">No themes match this filter.</td></tr>';
+      $('pulses').innerHTML=graph.repositories.filter(function(r){return r.pulse}).map(function(r){
+        return '<div data-repo="'+esc(r.name)+'"'+($('repo').value===r.name?' class="on"':'')+'><b>'+esc(short(r.name))+'</b><span>'+esc(r.pulse)+'</span></div>'}).join('')||'<div class="empty">No pulse lines in this sweep.</div>';
+      renderBuilds();
+      if(active)select(active,true);
+    }
+
+    function renderBuilds(){
+      var current={};(graph?graph.themes:[]).forEach(function(t){current[t.id]=1});
+      var rows=Object.keys(builds).map(function(k){return builds[k]}).filter(function(b){return !current[b.theme_id]})
+        .sort(function(a,b){return (b.requested_at||'').localeCompare(a.requested_at||'')});
+      $('builds-panel').hidden=!rows.length;$('builds-count').textContent=rows.length;
+      $('builds').innerHTML=rows.map(function(b){return '<tr><td class="w-id mono">'+esc(short(b.repo))+'</td><td><span class="title">'+esc(b.title)+'</span>'+(b.summary?'<span class="sub">'+esc(b.summary)+'</span>':'')+'</td>'+
+        '<td class="w-id">'+buildChip(b)+'</td><td class="w-id">'+(b.pr_url?'<a href="'+esc(b.pr_url)+'" target="_blank" rel="noopener">'+esc(b.pr_url.split('github.com/')[1])+'</a>':'<span class="muted">—</span>')+'</td>'+
+        '<td class="w-id num">'+esc(S.stamp(b.finished_at||b.requested_at).slice(0,10))+'</td></tr>'}).join('');
+    }
+
+    function select(id,quiet){
+      var t=(graph?graph.themes:[]).filter(function(x){return x.id===id})[0];if(!t)return;active=id;
+      if(!quiet)Array.prototype.forEach.call(document.querySelectorAll('#rows tr[data-nav]'),function(r){r.classList.toggle('sel',r.dataset.id===id)});
+      var b=builds[id],br=t.brief,running=b&&(b.status==='queued'||b.status==='building'),open=b&&b.status==='pr-open';
+      var label=running?STATUS[b.status][1]+'…':open?'PR open':b&&(b.status==='failed'||b.status==='blocked')?'Build again':'Build';
+      var note=open?'A PR is open for this theme. Review and merge it on GitHub.':running?'The steward is working on this theme. This pane updates on its own.':
+        t.readiness==='ready'?'Opens a PR that implements this brief. One steward session, billed like a tick. It never merges.':
+        'Marked <b>'+esc(t.readiness)+'</b>: the builder stops and reports the open questions rather than guess.';
+      $('detail').innerHTML='<span class="label">#'+t.rank+' · '+esc(t.repo)+' · '+esc(t.kind)+'</span><h2>'+esc(t.title)+'</h2><p>'+esc(t.summary)+'</p>'+
+        '<div class="build"><header>Build</header><div class="in"><p>'+note+'</p>'+
+        '<button class="btn '+(running||open?'':'sig')+' lg block" id="build"'+(running||open?' disabled':'')+'>'+esc(label)+'</button>'+
+        (b?'<div class="result">'+buildChip(b)+' '+(b.pr_url?'<a href="'+esc(b.pr_url)+'" target="_blank" rel="noopener">'+esc(b.pr_url.split('github.com/')[1])+(b.draft?' (draft)':'')+' ↗</a>':'')+
+          (b.summary?'<p style="margin:6px 0 0">'+esc(b.summary)+'</p>':'')+
+          (b.blockers&&b.blockers.length?'<ul>'+b.blockers.map(function(x){return '<li>'+esc(x)+'</li>'}).join('')+'</ul>':'')+'</div>':'')+
+        '</div></div>'+
+        '<h3>Assessment</h3><dl class="kv"><dt>Value</dt><dd>'+meter(t.value_score)+' '+esc(t.value)+'</dd>'+
+        '<dt>Readiness</dt><dd>'+st(READY[t.readiness]||['',t.readiness])+' '+esc(t.readiness_note)+'</dd>'+
+        '<dt>Effort</dt><dd class="mono">'+esc(t.effort)+'</dd><dt>Build cost</dt><dd class="mono">'+esc(t.build_cost)+'</dd><dt>Risk</dt><dd>'+esc(t.risk)+'</dd></dl>'+
+        '<h3>Brief</h3><p>'+esc(br.goal)+'</p><h3>Acceptance</h3><ul>'+br.acceptance.map(function(a){return '<li>'+esc(a)+'</li>'}).join('')+'</ul>'+
+        (br.likely_files.length?'<h3>Likely files</h3><ul>'+br.likely_files.map(function(f){return '<li><code>'+esc(f)+'</code></li>'}).join('')+'</ul>':'')+
+        (br.open_questions.length?'<h3>Open questions</h3><ul>'+br.open_questions.map(function(q){return '<li>'+esc(q)+'</li>'}).join('')+'</ul>':'')+
+        '<h3>Evidence</h3>'+t.evidence.map(function(e){return '<a class="ref" href="'+esc(e.url)+'" target="_blank" rel="noopener"><b>#'+e.number+' '+esc(e.title)+'</b><span>'+e.reactions+' reactions · '+e.participants+' people · '+e.comments+' comments · updated '+esc(S.ago(e.updated_at))+'</span></a>'}).join('');
+      var btn=$('build');if(btn&&!btn.disabled)btn.addEventListener('click',function(){build(t)});
+      try{history.replaceState(null,'','?theme='+encodeURIComponent(id))}catch(e){}
+    }
+
+    function build(t){
+      S.modal({title:'Build: '+t.title,tone:'sig',confirm:'Build',input:'optional note for the builder (e.g. keep the setting out of the UI for now)',
+        body:'<p>A steward session implements the brief in its own clone of <b>'+esc(t.repo)+'</b>, runs the tests and opens a PR. It never merges.</p>'})
+      .then(function(note){
+        if(note===false)return;
+        S.api('/api/build',{theme_id:t.id,note:typeof note==='string'?note:''}).then(function(x){
+          builds=x.builds||{};render();select(t.id);watch();S.toast('Build queued: '+t.title,'ok');
+        }).catch(function(e){S.toast(e.message,'error')});
+      });
+    }
+
+    function load(){return S.api('/api/insights').then(function(x){graph=x.insights;builds=x.builds||{};
+      $('stamp').textContent=graph?'ranked '+S.ago(graph.generated_at)+' · '+S.stamp(graph.generated_at)+' · from a GitHub snapshot':'no list yet'})}
+    function watch(){if(poll)return;poll=setInterval(function(){load().then(function(){render();if(!busy()){clearInterval(poll);poll=null}})},8000)}
+
+    ['repo','ready'].forEach(function(id){$(id).addEventListener('change',render)});
+    $('q').addEventListener('input',render);
+    $('rows').addEventListener('click',function(e){var tr=e.target.closest('tr[data-nav]');if(tr)select(tr.dataset.id)});
+    $('pulses').addEventListener('click',function(e){var d=e.target.closest('[data-repo]');if(!d)return;$('repo').value=$('repo').value===d.dataset.repo?'':d.dataset.repo;render()});
+    Array.prototype.forEach.call(document.querySelectorAll('th[data-sort]'),function(th){th.addEventListener('click',function(){
+      sortKey=th.dataset.sort;document.querySelectorAll('th[data-sort]').forEach(function(x){x.classList.toggle('sorted',x===th)});render()})});
+    S.nav({rows:function(){return Array.prototype.slice.call(document.querySelectorAll('#rows tr[data-nav]'))},select:function(r){select(r.dataset.id)},open:function(r){select(r.dataset.id);var b=$('build');if(b)b.focus()}});
+    intro();
+    load().then(function(){
+      if(graph)graph.repositories.forEach(function(r){var o=document.createElement('option');o.value=r.name;o.textContent=short(r.name)+(r.open_issues?' ('+r.open_issues+')':'');$('repo').appendChild(o)});
+      var p=new URLSearchParams(location.search),want=p.get('repo');
+      if(want&&graph){var m=graph.repositories.filter(function(r){return r.name===want||short(r.name)===want})[0];if(m)$('repo').value=m.name}
+      render();if(p.get('theme'))select(p.get('theme'));if(busy())watch();
+    }).catch(function(e){$('rows').innerHTML='<tr><td colspan="7" class="empty">'+esc(e.message)+'</td></tr>'});
   })();
   </script>
+  <script src="/assets/analysis-run.js"></script>
 </body>
 </html>

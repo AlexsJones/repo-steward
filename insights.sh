@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# Runs one read-only, out-of-band repository insight sweep.
+# Runs one out-of-band build-candidate sweep: a read-only GitHub fetch, one
+# model session that ranks what is worth building, and a mechanical publish.
 set -uo pipefail
 STEWARD_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$STEWARD_HOME"
 mkdir -p logs
+# Single-flight: refuse a second concurrent run, however it was started.
+exec 9>".insights.lock"
+flock -n 9 || { echo "=== insights $(date -u +%Y-%m-%dT%H:%M:%SZ) skipped: already running ===" >> logs/insights.log; exit 75; }
+printf '%s\n' "$$" >&9
 
 TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ENGINE="${STEWARD_ENGINE:-claude}"
 BIN="${STEWARD_ENGINE_BIN:-${CLAUDE_BIN:-claude}}"
 MODEL="${STEWARD_MODEL:-}"
-TIMEOUT_SEC="${STEWARD_INSIGHTS_TIMEOUT_SEC:-600}"
-export PROMPT="Read $STEWARD_HOME/INSIGHTS.md and execute one repository insight sweep exactly as described. The only output artifact you may write is $STEWARD_HOME/insights.candidate.json."
+TIMEOUT_SEC="${STEWARD_INSIGHTS_TIMEOUT_SEC:-1200}"
+export PROMPT="Read $STEWARD_HOME/INSIGHTS.md and run one build-candidate sweep exactly as described. The only output artifact you may write is $STEWARD_HOME/insights.candidate.json."
 
 if ! PREPARED="$(python3 insights.py prepare --root "$STEWARD_HOME" 2>>logs/insights.log)"; then
   echo "=== insights $TS preparation failed ===" >> logs/insights.log
@@ -49,6 +54,7 @@ case "$ENGINE" in
 esac
 
 if [[ $RC -ne 0 ]]; then
+  echo "=== insights $TS failed (rc=$RC) ===" >> logs/insights.log
   exit "$RC"
 fi
 if ! PUBLISHED="$(python3 insights.py publish --root "$STEWARD_HOME" 2>>logs/insights.log)"; then
@@ -61,6 +67,6 @@ import json, sys
 from audit import append
 result = json.loads(sys.argv[3])
 append("insights_done", "system", "insights", ts=sys.argv[1], ok=True,
-       summary=f"insight sweep published {result['themes']} theme(s) and {result['ideas']} idea(s)",
+       summary=f"build-candidate sweep published {result['themes']} theme(s), {result['ready']} ready to build",
        data={**result, "engine": sys.argv[2]})
 PY

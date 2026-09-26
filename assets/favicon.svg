@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Repo Steward">
+  <!-- Tab-size version of logo.svg: the same two interlinked rings, heavier
+       and larger so they stay legible at 16px; commit nodes omitted. -->
+  <rect width="256" height="256" fill="#141413"/>
+  <circle cx="94" cy="128" r="62" fill="none" stroke="#E9E9E4" stroke-width="34"/>
+  <circle cx="162" cy="128" r="62" fill="none" stroke="#E04E0B" stroke-width="34"/>
+  <path d="M150.8 184.8 A62 62 0 0 1 105.2 188.5" fill="none" stroke="#E9E9E4" stroke-width="34"/>
+</svg>

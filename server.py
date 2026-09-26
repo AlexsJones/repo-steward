@@ -7,10 +7,16 @@ Static file serving plus a minimal control API:
   GET  /api/progress          -> {steps: [...]}  (per-item progress the tick emits)
   GET  /api/metrics|uptime    -> chart data
   GET  /api/signals?repo=&kind=&limit= -> normalized evidence for insights
-  GET  /api/insights           -> current validated theme/idea graph + cited evidence
+  GET  /api/insights           -> ranked build-candidate themes + build statuses
   GET  /api/evaluation         -> latest self-evaluation, lessons, and cited evidence
-  POST /api/insight-decision   -> {idea_id, action:select|nominate|defer|dismiss|reset, note?}
-  POST /api/tick              -> start one steward tick (refused while one runs)
+  POST /api/build              -> {theme_id, note?}  queue a theme and start build.sh,
+        which implements its brief and opens a PR (never merges)
+  POST /api/tick              -> {"action"?: "start"|"cancel"}  start one steward
+        tick (refused while one runs), or stop the running one
+  GET  /api/analysis          -> {insights|evaluation: {running, started_at, last}}
+  POST /api/analysis          -> {"job": "insights"|"evaluation", "action"?:
+        "start"|"cancel"}  start or stop one out-of-band run (refused while that
+        same job runs; the two are independent)
   POST /api/mode              -> {"mode": "draft"|"live"}  (rewrites config.yaml)
   POST /api/backend           -> {"backend": "claude"|"codex"|"gemini"|"opencode"|"custom"}
   POST /api/schedule          -> {"preset": "manual"|"hourly"|"6h"|"daily"|"weekly"}
@@ -32,6 +38,8 @@ Static file serving plus a minimal control API:
         pending for the next tick (STEWARD.md step 0)
         body: {"repo": "llmfit", "refs": [...], "title": "...", "decision": "..."}
   GET  /api/decisions         -> recent decision entries + executor state
+  GET  /api/work              -> what the steward is running and has queued, and
+        what (if anything) holds the ledgers so merges/posts must wait
   GET  /api/audit?repo=&event=&limit=&since=&until= -> events from the decision log
          (audit.jsonl — see audit.py for the schema; every mutating endpoint
          here appends its event at the moment it acts. since/until are YYYY-MM-DD dates.)
@@ -40,11 +48,13 @@ Approvals run under the local gh auth — i.e. as Alex, because a human clicked.
 Ledger writes are refused while a tick or the decision executor is active to
 avoid racing the steward.
 """
+import fcntl
 import html as html_lib
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -55,7 +65,7 @@ from urllib.parse import urlparse, parse_qs
 
 import audit
 import signals
-import proactive
+import builds
 from tick_guard import review_record_errors
 
 ROOT = Path(__file__).resolve().parent
@@ -164,19 +174,15 @@ def first_run_page():
     real configured fleet, with the tick button and progress strip the controls
     script renders. dashboard-first-run.html is a tracked file; the repo cards
     are injected here so the filter lens sees them at load."""
-    cards = []
+    rows = []
     for r in repos_config():
-        watched = ", ".join(r["watch"]) if len(r["watch"]) < len(RESOURCES) else "all resources"
-        prio = r["priority"]
-        cards.append(
-            '<div class="card repo">'
-            f'<span class="name">{html_lib.escape(r["short"])}</span>'
-            f'<span class="quiet">{html_lib.escape(r["name"])}</span>'
-            f'<span class="quiet"><span class="prio {prio}">{prio}</span> '
-            f'watching {html_lib.escape(watched)}</span></div>')
-    if not cards:
-        cards.append('<div class="card repo"><span class="name">no repositories</span>'
-                     '<span class="quiet">add a repos: entry to config.yaml</span></div>')
+        watched = ", ".join(r["watch"]) if len(r["watch"]) < len(RESOURCES) else "all"
+        prio = '<i class="pri" title="high priority"></i>' if r["priority"] == "high" else ""
+        rows.append(f'<tr title="{html_lib.escape(r["name"])}"><td class="mono">{prio}'
+                    f'{html_lib.escape(r["short"])}</td><td class="muted">{html_lib.escape(watched)}</td></tr>')
+    if not rows:
+        rows.append('<tr><td colspan="2" class="muted">no repositories: add a repos: entry to config.yaml</td></tr>')
+    cards = rows
     page = (ROOT / "dashboard-first-run.html").read_text()
     return page.replace("<!--REPOS-->", "\n".join(cards))
 
@@ -216,54 +222,6 @@ def ref_url(full_repo, ref):
     if not path or not num.isdigit():
         return None
     return f"https://github.com/{full_repo}/{path}/{num}"
-
-
-def insight_decisions(root=ROOT):
-    """Latest local maintainer posture for each idea node."""
-    latest = {}
-    path = root / "insight-decisions.jsonl"
-    if not path.exists():
-        return latest
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        idea_id = entry.get("idea_id")
-        if idea_id:
-            if entry.get("action") == "reset":
-                latest.pop(idea_id, None)
-            else:
-                latest[idea_id] = entry
-    return latest
-
-
-def find_insight_idea(graph, idea_id):
-    for repo in (graph or {}).get("repositories", []):
-        for theme in repo.get("themes", []):
-            for idea in theme.get("ideas", []):
-                if idea.get("id") == idea_id:
-                    return repo, theme, idea
-    return None
-
-
-def nomination_error(root, idea_id):
-    """Return why an idea cannot advance from proposal to implementation."""
-    queued = proactive.read_json(
-        root / "proactive.json", {"items": {}}).get("items", {}).get(idea_id)
-    if not queued or queued.get("status") != "ready-for-maintainer":
-        return "idea must complete investigation before it can be nominated for build"
-    proposal_path = queued.get("proposal_path")
-    if not isinstance(proposal_path, str) or not proposal_path.strip():
-        return "idea has no reviewable proposal to nominate"
-    try:
-        proposal = (root / proposal_path).resolve()
-        proposal.relative_to(root.resolve())
-    except (OSError, ValueError):
-        return "idea proposal path is invalid"
-    if not proposal.is_file():
-        return "idea has no reviewable proposal to nominate"
-    return None
 
 
 RESOURCES = ("issues", "prs", "discussions")
@@ -487,6 +445,207 @@ def spawn_decider():
         ["bash", str(ROOT / "decide.sh")], cwd=ROOT, stdout=log, stderr=log)
 
 
+# Out-of-band analysis jobs. The scripts take these locks themselves, so a run
+# started with `make` is seen here too. Both jobs are read-only toward GitHub
+# and the queue, so neither waits for the other or for a tick.
+ANALYSIS_JOBS = {
+    "insights": {"script": "insights.sh", "log": "insights.log", "output": "insights.json",
+                 "lock": ".insights.lock", "label": "insight sweep"},
+    "evaluation": {"script": "evaluate.sh", "log": "evaluation.log", "output": "evaluation.json",
+                   "lock": ".evaluation.lock", "label": "self-evaluation"},
+    # Not read-only: builds push a branch and open a PR. They work in their
+    # own clones (work/builds/), so they do not wait for a tick either.
+    "build": {"script": "build.sh", "log": "build.log", "output": "builds.json",
+              "lock": ".build.lock", "label": "build"},
+}
+ANALYSIS_ENV_KEYS = ("STEWARD_ENGINE", "STEWARD_ENGINE_BIN", "STEWARD_MODEL",
+                     "STEWARD_ENGINE_CMD", "PATH")
+ANALYSIS_RESULT = re.compile(
+    r"^=== (?:insights|evaluation) (\S+) (.*?) ===$")
+
+
+# Launch time per job: systemd-run returns before the script takes its lock,
+# so a just-started job counts as running for a short grace period.
+ANALYSIS_LAUNCHED = {}
+ANALYSIS_START_GRACE_SEC = 20
+
+
+def analysis_running(job, root=ROOT):
+    if time.time() - ANALYSIS_LAUNCHED.get(job, 0) < ANALYSIS_START_GRACE_SEC:
+        return True
+    lock = root / ANALYSIS_JOBS[job]["lock"]
+    if not lock.exists():
+        return False
+    with open(lock, "a") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        fcntl.flock(handle, fcntl.LOCK_UN)
+    return False
+
+
+def analysis_last_result(job, root=ROOT):
+    """Outcome of the most recent finished run: the script's own log, unless
+    the published output is newer (it can be published by hand)."""
+    result = analysis_logged_result(job, root)
+    try:
+        output = json.loads((root / ANALYSIS_JOBS[job]["output"]).read_text(encoding="utf-8"))
+        generated = output.get("generated_at")
+    except (OSError, ValueError, AttributeError):
+        generated = None
+    if generated and (result is None or generated > result["ts"]):
+        return {"ts": generated, "outcome": "published"}
+    return result
+
+
+def analysis_logged_result(job, root=ROOT):
+    log = root / "logs" / ANALYSIS_JOBS[job]["log"]
+    if not log.exists():
+        return None
+    for line in reversed(log.read_text(encoding="utf-8", errors="replace").splitlines()):
+        match = ANALYSIS_RESULT.match(line)
+        if not match:
+            continue
+        ts, rest = match.groups()
+        if rest.startswith("published"):
+            return {"ts": ts, "outcome": "published"}
+        if rest.startswith("skipped"):
+            continue
+        if rest.startswith("cancelled"):
+            return {"ts": ts, "outcome": "cancelled"}
+        if "rejected" in rest:
+            return {"ts": ts, "outcome": "rejected",
+                    "detail": "the model's output failed validation; the previous result is kept"}
+        if rest.startswith("failed") or rest.startswith("preparation failed"):
+            rc = re.search(r"rc=(\d+)", rest)
+            detail = {"124": "timed out", "143": "stopped"}.get(
+                rc.group(1) if rc else "", rest)
+            return {"ts": ts, "outcome": "failed", "detail": detail}
+    return None
+
+
+def analysis_status(root=ROOT):
+    out = {}
+    for job in ANALYSIS_JOBS:
+        running = analysis_running(job, root)
+        lock = root / ANALYSIS_JOBS[job]["lock"]
+        started = None
+        if running:
+            stamp = lock.stat().st_mtime if lock.exists() else ANALYSIS_LAUNCHED[job]
+            started = (datetime.fromtimestamp(max(stamp, ANALYSIS_LAUNCHED.get(job, 0)), timezone.utc)
+                       .strftime("%Y-%m-%dT%H:%M:%SZ"))
+        out[job] = {"running": running, "started_at": started,
+                    "last": analysis_last_result(job, root)}
+    return out
+
+
+def tick_unit_environment():
+    """systemd properties that give a job the same engine/credentials as a tick,
+    read from the unit that defines them (see current_backend)."""
+    service = UNIT_DIR / "repo-steward.service"
+    text = service.read_text(encoding="utf-8") if service.exists() else ""
+    props = [f"EnvironmentFile={m.group(1).strip()}"
+             for m in re.finditer(r"^EnvironmentFile=(.+)$", text, re.M)]
+    for m in re.finditer(r"^Environment=([A-Z_]+)=(.*)$", text, re.M):
+        if m.group(1) in ANALYSIS_ENV_KEYS:
+            props.append(f"Environment={m.group(1)}={m.group(2).strip()}")
+    return props
+
+
+def analysis_unit(job):
+    return f"repo-steward-{job}.service"
+
+
+def unit_state(unit):
+    return subprocess.run(["systemctl", "--user", "is-active", unit],
+                          capture_output=True, text=True).stdout.strip()
+
+
+def stop_unit(unit):
+    result = subprocess.run(["systemctl", "--user", "stop", unit],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        return False, (result.stderr or result.stdout).strip() or "systemctl stop failed"
+    return True, None
+
+
+def process_tree(pid):
+    """A pid and its descendants, children before parents.
+
+    A run started with `make` is not in a unit of its own, so stopping it means
+    signalling the script and whatever it is waiting on (timeout, the agent CLI)
+    rather than a cgroup."""
+    children = subprocess.run(["ps", "-o", "pid=", "--ppid", str(pid)],
+                              capture_output=True, text=True).stdout.split()
+    out = []
+    for child in children:
+        out.extend(process_tree(int(child)))
+    out.append(pid)
+    return out
+
+
+def lock_pid(job, root=ROOT):
+    try:
+        return int((root / ANALYSIS_JOBS[job]["lock"]).read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def note_analysis_cancelled(job, root=ROOT):
+    """Record the stop in the script's own log: a signalled run writes nothing."""
+    ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    with open(root / "logs" / ANALYSIS_JOBS[job]["log"], "a", encoding="utf-8") as handle:
+        handle.write(f"=== {job} {ts} cancelled by maintainer ===\n")
+    return ts
+
+
+def cancel_analysis(job, root=ROOT):
+    label = ANALYSIS_JOBS[job]["label"]
+    if not analysis_running(job, root):
+        return False, f"no {label} is running"
+    unit = analysis_unit(job)
+    if unit_state(unit) in {"active", "activating", "reloading", "deactivating"}:
+        ok, error = stop_unit(unit)
+        if not ok:
+            return False, error
+    else:
+        pid = lock_pid(job, root)
+        if pid is None:
+            return False, (f"the running {label} left no pid in its lock — "
+                           "stop it where it was started")
+        try:
+            for target in process_tree(pid):
+                os.kill(target, signal.SIGTERM)
+        except OSError as error:
+            return False, f"could not stop pid {pid}: {error}"
+    ANALYSIS_LAUNCHED.pop(job, None)
+    note_analysis_cancelled(job, root)
+    return True, None
+
+
+def start_analysis(job, root=ROOT):
+    """Launch one job as a transient user unit so it outlives dashboard restarts."""
+    spec = ANALYSIS_JOBS[job]
+    (root / "logs").mkdir(exist_ok=True)
+    log = root / "logs" / spec["log"]
+    subprocess.run(["systemctl", "--user", "reset-failed", analysis_unit(job)],
+                   capture_output=True)
+    cmd = ["systemd-run", "--user", "--no-block", "--collect", "--quiet",
+           f"--unit={analysis_unit(job)}",
+           f"--description=Repo Steward {spec['label']}",
+           f"--property=WorkingDirectory={root}",
+           f"--property=StandardOutput=append:{log}",
+           f"--property=StandardError=append:{log}"]
+    cmd += [f"--property={prop}" for prop in tick_unit_environment()]
+    cmd += ["/bin/bash", str(root / spec["script"])]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        return False, (result.stderr or result.stdout).strip() or "systemd-run failed"
+    ANALYSIS_LAUNCHED[job] = time.time()
+    return True, None
+
+
 def pending_decisions():
     """True if decisions.jsonl has entries the executor should act on.
     Entries carrying a `note` are excluded — that's the executor asking the
@@ -502,6 +661,134 @@ def pending_decisions():
         if o.get("status") == "pending" and not o.get("note"):
             return True
     return False
+
+
+def _jsonl_tail(path, n):
+    rows = []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines()[-n:]:
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    return rows
+
+
+def _since(ts_epoch):
+    return datetime.fromtimestamp(ts_epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def work_status(root=ROOT):
+    """Everything the steward is doing or has queued, for the Work panel.
+
+    `running` lists live processes with what each is working on; `queued`
+    lists work waiting for its turn. `ledger_lock` names what currently holds
+    the ledgers: while set, merges, posts and dismissals are refused."""
+    running, queued = [], []
+
+    if tick_active():
+        steps = [s for s in _jsonl_tail(root / "progress.jsonl", 40) if s.get("msg")]
+        prog = tick_progress() or {}
+        running.append({
+            "kind": "tick", "title": "Tick",
+            "elapsed_sec": tick_elapsed_sec(),
+            "detail": " · ".join(x for x in (prog.get("phase"), prog.get("note")) if x),
+            "steps": [{"repo": s.get("repo"), "ref": s.get("ref"), "msg": s.get("msg")} for s in steps[-8:]],
+            "holds_ledgers": True,
+        })
+
+    decisions = _jsonl_tail(root / "decisions.jsonl", 200)
+    waiting = [d for d in decisions if d.get("status") == "pending" and not d.get("note")]
+    if decide_active():
+        started = None
+        try:
+            started = (root / ".decide.pid").stat().st_mtime
+        except OSError:
+            pass
+        actions = [a for a in _jsonl_tail(root / "activity.jsonl", 20) if a.get("summary")]
+        running.append({
+            "kind": "decide", "title": "Carrying out your decisions",
+            "elapsed_sec": int(time.time() - started) if started else None,
+            "detail": "; ".join((d.get("title") or d.get("decision") or "")[:90] for d in waiting) or "",
+            "steps": [{"repo": a.get("repo"), "ref": a.get("ref"), "msg": a.get("summary")} for a in actions[-6:]],
+            "holds_ledgers": True,
+        })
+    else:
+        for d in waiting:
+            queued.append({"kind": "decision", "title": (d.get("title") or d.get("decision") or "")[:140],
+                           "since": d.get("ts"), "detail": (d.get("decision") or "")[:200]})
+    for d in decisions:
+        if d.get("status") == "pending" and d.get("note"):
+            queued.append({"kind": "clarify", "title": (d.get("title") or "")[:140], "since": d.get("ts"),
+                           "detail": "needs your clarification: " + d["note"][:200]})
+
+    for job, spec in ANALYSIS_JOBS.items():
+        if job == "build" or not analysis_running(job, root):
+            continue
+        lock = root / spec["lock"]
+        running.append({"kind": job, "title": spec["label"].capitalize(),
+                        "elapsed_sec": int(time.time() - lock.stat().st_mtime) if lock.exists() else None,
+                        "detail": "read-only: does not block merges", "steps": [], "holds_ledgers": False})
+
+    for b in builds.read(root).get("items", {}).values():
+        if b.get("status") == "building":
+            started = b.get("started_at")
+            elapsed = None
+            if started:
+                try:
+                    elapsed = int(time.time() - datetime.strptime(started, "%Y-%m-%dT%H:%M:%SZ")
+                                  .replace(tzinfo=timezone.utc).timestamp())
+                except ValueError:
+                    pass
+            running.append({"kind": "build", "title": "Build: " + (b.get("title") or ""), "elapsed_sec": elapsed,
+                            "detail": b.get("repo", "") + " · own clone, does not block merges",
+                            "steps": [], "holds_ledgers": False, "theme_id": b.get("theme_id")})
+        elif b.get("status") == "queued":
+            queued.append({"kind": "build", "title": "Build: " + (b.get("title") or ""),
+                           "since": b.get("requested_at"), "detail": b.get("repo", ""),
+                           "theme_id": b.get("theme_id")})
+
+    holder = next((r for r in running if r["holds_ledgers"]), None)
+    return {"running": running, "queued": queued, "recent": recent_work(root),
+            "ledger_lock": ({"kind": holder["kind"], "title": holder["title"],
+                             "elapsed_sec": holder.get("elapsed_sec"), "detail": holder.get("detail")}
+                            if holder else None),
+            "schedule": current_schedule()}
+
+
+# Audit events that close a piece of work, and how the Work panel labels them.
+RECENT_EVENTS = {"tick_done": "tick", "decide_done": "decisions", "decision_executed": "decision",
+                 "terminal": "merge/close", "approve": "approve", "insights_done": "sweep",
+                 "evaluation_done": "evaluation", "build_done": "build", "analysis_cancelled": "stopped"}
+
+
+def recent_work(root=ROOT, limit=10):
+    """The last finished pieces of work, newest first, from the decision log."""
+    out = []
+    for e in reversed(_jsonl_tail(root / "audit.jsonl", 600)):
+        label = RECENT_EVENTS.get(e.get("event"))
+        if not label:
+            continue
+        out.append({"ts": e.get("ts"), "kind": label, "ok": e.get("ok", True) is not False,
+                    "repo": e.get("repo"), "ref": e.get("ref"), "via": e.get("via"),
+                    "summary": (e.get("summary") or "")[:220]})
+        if len(out) >= limit * 2:
+            break
+    return sorted(out, key=lambda r: r.get("ts") or "", reverse=True)[:limit]
+
+
+def busy_error(action="try again"):
+    """A specific refusal: name what holds the ledgers instead of 'busy'."""
+    lock = work_status()["ledger_lock"]
+    if not lock:
+        return None
+    what = ("a tick is running" if lock["kind"] == "tick"
+            else "the decision runner is carrying out: " + (lock.get("detail") or "your decisions"))
+    elapsed = lock.get("elapsed_sec")
+    took = (f" ({elapsed // 60}m so far)" if elapsed and elapsed >= 60
+            else f" ({elapsed}s so far)" if elapsed else "")
+    return (f"Steward busy: {what}{took}"
+            + f". {action} when it finishes; the Work panel in the top bar shows progress.")
 
 
 def merge_method_flag(full_repo):
@@ -1039,6 +1326,8 @@ class Handler(SimpleHTTPRequestHandler):
                     except json.JSONDecodeError:
                         pass
             return self._json(200, {"steps": steps})
+        if self.path == "/api/work":
+            return self._json(200, work_status())
         if self.path == "/api/decisions":
             entries = []
             p = ROOT / "decisions.jsonl"
@@ -1089,7 +1378,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json(400, {"error": "repo=owner/name & numeric num required"})
             ep = "pulls" if kind == "pr" else "issues"
             ok, out = run_gh(["api", f"repos/{repo}/{ep}/{num}",
-                              "--jq", '{state:.state, merged:(.merged // false), head:(.head.sha // "")}'])
+                              "--jq", '{state:.state, merged:(.merged // false), head:(.head.sha // ""), auto_merge:(.auto_merge != null), behind:(.mergeable_state == "behind")}'])
             if not ok:
                 return self._json(200, {"state": "unknown", "merged": False})
             try:
@@ -1139,23 +1428,16 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"signals": records})
         if parsed.path == "/api/insights":
             graph_path = ROOT / "insights.json"
-            if not graph_path.exists():
-                return self._json(200, {"insights": None, "evidence": {}})
             try:
                 graph = json.loads(graph_path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                graph = None
             except json.JSONDecodeError:
                 return self._json(500, {"error": "published insights are invalid JSON"})
-            cited = set()
-            for repo in graph.get("repositories", []):
-                for theme in repo.get("themes", []):
-                    cited.update(theme.get("signal_ids", []))
-                    for idea in theme.get("ideas", []):
-                        cited.update(idea.get("signal_ids", []))
-            evidence = {record["id"]: record for record in signals.read_jsonl(ROOT / "signals.jsonl")
-                        if record.get("id") in cited}
-            work = proactive.read_json(ROOT / "proactive.json", {"items": {}}).get("items", {})
-            return self._json(200, {"insights": graph, "evidence": evidence,
-                                    "decisions": insight_decisions(), "proactive": work})
+            if graph is not None and graph.get("v") != 2:
+                graph = None  # the retired pattern graph; the page asks for a sweep
+            return self._json(200, {"insights": graph, "builds": builds.read(ROOT)["items"],
+                                    "building": analysis_running("build")})
         if parsed.path == "/api/evaluation":
             report_path = ROOT / "evaluation.json"
             if not report_path.exists():
@@ -1176,6 +1458,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"evaluation": report,
                                     "lessons": report.get("lessons", []),
                                     "evidence": evidence, "runs": len(history)})
+        if self.path == "/api/analysis":
+            return self._json(200, analysis_status())
         if self.path == "/api/uptime":
             state_path = ROOT / "uptime_state.json"
             state = json.loads(state_path.read_text()) if state_path.exists() else {}
@@ -1214,6 +1498,15 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(400, {"error": "bad json"})
 
         if self.path == "/api/tick":
+            if req.get("action") == "cancel":
+                if not tick_active():
+                    return self._json(409, {"error": "no tick is running"})
+                ok, error = stop_unit("repo-steward.service")
+                if not ok:
+                    return self._json(500, {"error": error})
+                audit.append("tick_cancelled", "maintainer", "dashboard", ok=False,
+                             summary="tick stopped from the dashboard mid-run")
+                return self._json(200, {"cancelled": True})
             if tick_active():
                 return self._json(409, {"error": "a tick is already running"})
             if decide_active():
@@ -1223,6 +1516,28 @@ class Handler(SimpleHTTPRequestHandler):
             audit.append("tick_requested", "maintainer", "dashboard",
                          summary="tick started from the dashboard")
             return self._json(200, {"started": True})
+
+        if self.path == "/api/analysis":
+            job = req.get("job")
+            if job not in ANALYSIS_JOBS:
+                return self._json(400, {"error": "job must be insights or evaluation"})
+            label = ANALYSIS_JOBS[job]["label"]
+            if req.get("action") == "cancel":
+                ok, error = cancel_analysis(job)
+                if not ok:
+                    return self._json(409 if "no " + label in error else 500, {"error": error})
+                audit.append("analysis_cancelled", "maintainer", "dashboard", ok=False,
+                             summary=f"{label} stopped from the dashboard mid-run",
+                             data={"job": job})
+                return self._json(200, {"cancelled": True, **analysis_status()})
+            if analysis_running(job):
+                return self._json(409, {"error": f"a {label} is already running"})
+            ok, error = start_analysis(job)
+            if not ok:
+                return self._json(500, {"error": error})
+            audit.append("analysis_requested", "maintainer", "dashboard",
+                         summary=f"{label} started from the dashboard", data={"job": job})
+            return self._json(200, {"started": True, **analysis_status()})
 
         if self.path == "/api/decide":
             text = (req.get("decision") or "").strip()
@@ -1250,47 +1565,26 @@ class Handler(SimpleHTTPRequestHandler):
             spawn_decider()
             return self._json(200, {"recorded": True, "mode": "executing", "id": entry["ts"]})
 
-        if self.path == "/api/insight-decision":
-            idea_id = (req.get("idea_id") or "").strip()
-            action = req.get("action")
-            if action not in {"select", "nominate", "defer", "dismiss", "reset"}:
-                return self._json(400, {"error":
-                    "action must be select, nominate, defer, dismiss, or reset"})
-            graph_path = ROOT / "insights.json"
+        if self.path == "/api/build":
+            # The maintainer's Build click: queue the theme's brief and start
+            # build.sh, which implements it and opens a PR (never merges).
+            theme_id = (req.get("theme_id") or "").strip()
             try:
-                graph = json.loads(graph_path.read_text(encoding="utf-8"))
+                graph = json.loads((ROOT / "insights.json").read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
-                return self._json(409, {"error": "no validated insight graph is available"})
-            found = find_insight_idea(graph, idea_id)
-            if not found:
-                return self._json(404, {"error": "idea is not in the current insight graph"})
-            repo, theme, idea = found
-            if action == "nominate":
-                error = nomination_error(ROOT, idea_id)
-                if error:
-                    return self._json(409, {"error": error})
-            entry = {
-                "v": 1,
-                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "idea_id": idea_id,
-                "repo": repo["name"],
-                "theme_id": theme["id"],
-                "action": action,
-                "note": (req.get("note") or "").strip()[:500],
-            }
-            with open(ROOT / "insight-decisions.jsonl", "a", encoding="utf-8") as handle:
-                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            audit.append(
-                "insight_decision", "maintainer", "insights",
-                repo=repo["name"].rsplit("/", 1)[-1], summary=f"{action} idea: {idea['title']}",
-                data={"idea_id": idea_id, "theme_id": theme["id"], "action": action,
-                      "note": entry["note"]}, ts=entry["ts"])
-            queue = proactive.sync(ROOT)
-            return self._json(200, {"recorded": True, "decision": entry,
-                                    "decisions": insight_decisions(),
-                                    "proactive": proactive.read_json(
-                                        ROOT / "proactive.json", {"items": {}}).get("items", {}),
-                                    "queue": queue})
+                return self._json(409, {"error": "no build-candidate list is published"})
+            theme = next((t for t in graph.get("themes", []) if t.get("id") == theme_id), None)
+            if not theme:
+                return self._json(404, {"error": "theme is not in the current list"})
+            ok, result = builds.enqueue(theme, (req.get("note") or "").strip(), ROOT)
+            if not ok:
+                return self._json(409, {"error": result})
+            if not analysis_running("build"):
+                started, error = start_analysis("build")
+                if not started:
+                    return self._json(500, {"error": f"queued, but the build runner did not start: {error}"})
+            return self._json(200, {"queued": True, "builds": builds.read(ROOT)["items"],
+                                    "building": True})
 
         if self.path == "/api/terminal":
             # The decision executor's arm for terminal states. The engine's
@@ -1362,7 +1656,7 @@ class Handler(SimpleHTTPRequestHandler):
 
         if self.path == "/api/backend":
             if tick_active() or decide_active():
-                return self._json(409, {"error": "steward busy — switch backend when it finishes"})
+                return self._json(409, {"error": busy_error("Switch backend")})
             old = current_backend()
             ok, detail = set_backend(req.get("backend"))
             if not ok:
@@ -1431,7 +1725,7 @@ class Handler(SimpleHTTPRequestHandler):
 
         if self.path == "/api/dismiss":
             if tick_active() or decide_active():
-                return self._json(409, {"error": "steward busy — try again when it finishes"})
+                return self._json(409, {"error": busy_error("Try again") or "steward busy"})
             short = req.get("repo", "")
             ledger_path = ROOT / "state" / f"{short}.json"
             if not ledger_path.exists():
@@ -1459,7 +1753,7 @@ class Handler(SimpleHTTPRequestHandler):
 
         if self.path == "/api/approve":
             if tick_active() or decide_active():
-                return self._json(409, {"error": "steward busy — try again when it finishes"})
+                return self._json(409, {"error": busy_error("Try again") or "steward busy"})
             repos = repo_map()
             short = req.get("repo", "")
             full = repos.get(short)
@@ -1475,10 +1769,21 @@ class Handler(SimpleHTTPRequestHandler):
                     continue
                 number = key.split("-", 1)[1]
                 item_ok, details = True, []
+                latest = latest_review_record(item)
                 for action in item.get("staged_actions", []):
-                    if action.get("executed_at"):
+                    if action.get("executed_at") or action.get("superseded_at"):
                         continue
                     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                    # A review staged for a head the PR has since moved past
+                    # (a bot re-pin, a rebase) was replaced by a newer record.
+                    # Posting it would review the wrong commit; skip it, and
+                    # never let it block the review and merge that are current.
+                    link = action.get("review_record_id")
+                    if (link and latest.get("id") and link != latest["id"]
+                            and "review" in action.get("kind", "")):
+                        action["superseded_at"] = now
+                        details.append(f"skipped review staged for an older head ({link})")
+                        continue
                     ok, detail = prepare_review_record(item, action, now)
                     if not ok:
                         details.append(detail)
@@ -1521,19 +1826,33 @@ class Handler(SimpleHTTPRequestHandler):
                         details.append("no staged actions; merging on verdict")
                     ok, detail = merge_pr(full, number)
                     details.append(detail)
-                    merged = ok
+                    # merge_pr succeeds both when GitHub merged and when it only
+                    # queued auto-merge behind refreshed checks. Only the first
+                    # is merged; the item stays Ready until GitHub says so.
+                    queued = ok and "auto-merge queued" in detail
+                    merged = ok and not queued
                     item_ok = item_ok and ok
-                if item_ok:
+                else:
+                    queued = False
+                stamp_now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                if item_ok and queued:
+                    item["merge_queued_at"] = stamp_now
+                    item["last_action"] = "approved by maintainer via dashboard; GitHub auto-merge queued"
+                    item["last_action_at"] = stamp_now
+                elif item_ok:
+                    item.pop("merge_queued_at", None)
                     item["status"] = "done" if merged else "posted"
                     item["last_action"] = ("approved & merged by maintainer via dashboard"
                                            if merged else "approved by maintainer via dashboard; posted")
-                    item["last_action_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-                outcomes[key] = {"ok": item_ok, "merged": merged, "detail": "; ".join(details)}
+                    item["last_action_at"] = stamp_now
+                outcomes[key] = {"ok": item_ok, "merged": merged, "queued": queued,
+                                 "detail": "; ".join(details)}
                 audit_record = latest_review_record(item)
                 audit.append("approve", "maintainer", "dashboard", repo=short,
                              ref=key, ok=item_ok, detail="; ".join(details),
-                             summary="approved via dashboard" + (" & merged" if merged else ""),
-                             data={"merged": merged,
+                             summary="approved via dashboard" + (" & merged" if merged else
+                                                                 " & merge queued" if queued else ""),
+                             data={"merged": merged, "queued": queued,
                                    "review_record_id": audit_record.get("id"),
                                    "review_integrity": audit_record.get("integrity", "canonical")})
             ledger_path.write_text(json.dumps(ledger, indent=2))
