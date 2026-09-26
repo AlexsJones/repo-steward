@@ -1,27 +1,53 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-label="Repo Steward — an autonomous maintainer's assistant">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-label="Repo Steward: an autonomous agent for open-source repository management">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#123F37"/>
-      <stop offset="1" stop-color="#0B2B26"/>
-    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#22221F" stroke-width="1"/>
+    </pattern>
   </defs>
-  <rect width="1280" height="640" fill="url(#bg)"/>
+  <rect width="1280" height="640" fill="#141413"/>
+  <rect width="1280" height="640" fill="url(#grid)"/>
 
-  <!-- interlinked commit-rings mark -->
-  <g transform="translate(96,192) scale(1.6)">
-    <circle cx="104" cy="128" r="46" fill="none" stroke="#ECF5F1" stroke-width="17"/>
-    <circle cx="152" cy="128" r="46" fill="none" stroke="#8FD8C4" stroke-width="17"/>
-    <path d="M141.5 156.4 A46 46 0 0 1 113.5 172.7" fill="none" stroke="#ECF5F1" stroke-width="17" stroke-linecap="butt"/>
-    <circle cx="58" cy="128" r="14" fill="#ECF5F1"/>
-    <circle cx="58" cy="128" r="6" fill="#0F4E42"/>
-    <circle cx="198" cy="128" r="14" fill="#8FD8C4"/>
-    <circle cx="198" cy="128" r="6" fill="#0F4E42"/>
+  <!-- top bar, as in the dashboard -->
+  <rect width="1280" height="56" fill="#0A0A09"/>
+  <rect x="0" y="55" width="1280" height="1" fill="#33332F"/>
+  <rect x="40" y="22" width="12" height="12" fill="#E04E0B"/>
+  <text x="66" y="34" font-family="Noto Sans Mono, DejaVu Sans Mono, monospace" font-size="15" font-weight="700" letter-spacing="2.4" fill="#E9E9E4">REPO STEWARD</text>
+  <g font-family="Noto Sans Mono, DejaVu Sans Mono, monospace" font-size="13" letter-spacing="1.6" fill="#8E8E86">
+    <text x="760" y="33">MODE <tspan fill="#45C07A" font-weight="700">LIVE</tspan></text>
+    <text x="880" y="33">TICK <tspan fill="#E9E9E4" font-weight="700">OK</tspan></text>
+  </g>
+  <rect x="990" y="0" width="290" height="56" fill="#E04E0B"/>
+  <text x="1135" y="34" text-anchor="middle" font-family="Noto Sans Mono, DejaVu Sans Mono, monospace" font-size="15" font-weight="700" letter-spacing="2.4" fill="#FFFFFF">▶ RUN TICK</text>
+
+  <!-- mark -->
+  <g transform="translate(80,176) scale(1.25)">
+    <rect width="256" height="256" fill="#1B1B19" stroke="#33332F" stroke-width="1.6"/>
+    <circle cx="104" cy="128" r="46" fill="none" stroke="#E9E9E4" stroke-width="18"/>
+    <circle cx="152" cy="128" r="46" fill="none" stroke="#E04E0B" stroke-width="18"/>
+    <path d="M141.5 156.4 A46 46 0 0 1 113.5 172.7" fill="none" stroke="#E9E9E4" stroke-width="18"/>
+    <rect x="42" y="112" width="32" height="32" fill="#E9E9E4"/>
+    <rect x="52" y="122" width="12" height="12" fill="#1B1B19"/>
+    <rect x="182" y="112" width="32" height="32" fill="#E04E0B"/>
+    <rect x="192" y="122" width="12" height="12" fill="#1B1B19"/>
   </g>
 
-  <g font-family="Iowan Old Style, Palatino, Georgia, serif">
-    <text x="560" y="310" font-size="88" font-weight="600" fill="#ECF5F1">Repo Steward</text>
+  <!-- title block -->
+  <text x="480" y="262" font-family="Noto Sans Mono, DejaVu Sans Mono, monospace" font-size="72" font-weight="700" letter-spacing="3" fill="#E9E9E4">REPO STEWARD</text>
+  <rect x="482" y="288" width="720" height="3" fill="#E9E9E4"/>
+  <text x="482" y="342" font-family="Noto Sans, DejaVu Sans, sans-serif" font-size="29" fill="#BDBDB5">An autonomous agent for open-source repository</text>
+  <text x="482" y="382" font-family="Noto Sans, DejaVu Sans, sans-serif" font-size="29" fill="#BDBDB5">management. You keep the final say.</text>
+
+  <!-- readout strip -->
+  <g font-family="Noto Sans Mono, DejaVu Sans Mono, monospace" font-size="15" font-weight="700" letter-spacing="2">
+    <rect x="482" y="424" width="720" height="58" fill="#1B1B19" stroke="#33332F"/>
+    <line x1="662" y1="424" x2="662" y2="482" stroke="#33332F"/>
+    <line x1="842" y1="424" x2="842" y2="482" stroke="#33332F"/>
+    <line x1="1022" y1="424" x2="1022" y2="482" stroke="#33332F"/>
+    <text x="572" y="459" text-anchor="middle" fill="#E9E9E4">TRIAGE</text>
+    <text x="752" y="459" text-anchor="middle" fill="#E9E9E4">REVIEW</text>
+    <text x="932" y="459" text-anchor="middle" fill="#E9E9E4">BUILD</text>
+    <text x="1112" y="459" text-anchor="middle" fill="#E04E0B">YOU MERGE</text>
   </g>
-  <text x="562" y="370" font-size="28" fill="#A9CFC2" font-family="system-ui, -apple-system, sans-serif">An autonomous agent for open-source</text>
-  <text x="562" y="412" font-size="28" fill="#A9CFC2" font-family="system-ui, -apple-system, sans-serif">repository management.</text>
-  <text x="562" y="500" font-size="26" fill="#8FD8C4" font-family="ui-monospace, Menlo, monospace">github.com/AlexsJones/repo-steward</text>
+
+  <text x="482" y="560" font-family="Noto Sans Mono, DejaVu Sans Mono, monospace" font-size="22" fill="#8E8E86">github.com/AlexsJones/repo-steward</text>
 </svg>

@@ -32,3 +32,11 @@ dashboard.html
 __pycache__/
 VOICE.md
 tmp/
+.insights.lock
+.evaluation.lock
+builds.json
+builds/
+.build.lock
+.builds.json.lock
+.merge_ready_updates.json
+insights.v1.json

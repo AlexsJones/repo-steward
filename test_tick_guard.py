@@ -9,12 +9,10 @@ from pathlib import Path
 
 from tick_guard import (check_review_integrity, check_tick, recover_from_audit,
                         repair_ledgers, review_record_errors)
-from server import (auto_merge_candidate, find_insight_idea, insight_decisions,
-                    nomination_error, prepare_review_record)
+from server import auto_merge_candidate, prepare_review_record
 from render_dashboard import render
 from signals import (collect as collect_signals, item_signal,
                      query as query_signals)
-from insights import InvalidInsights, prepare as prepare_insights, validate as validate_insights
 from proactive import sync as sync_proactive
 from evaluation import InvalidEvaluation, validate as validate_evaluation
 
@@ -227,7 +225,6 @@ class TickGuardTest(unittest.TestCase):
                 "id": idea_id, "status": "ready-for-maintainer", "attempts": 1,
                 "last_control_at": "2026-08-20T01:00:00Z",
                 "proposal_path": "proposals/one.md"}}})
-            self.assertIsNone(nomination_error(root, idea_id))
             (root / "insight-decisions.jsonl").write_text(json.dumps({
                 "idea_id": idea_id, "action": "nominate",
                 "ts": "2026-08-20T02:00:00Z"}) + "\n")
@@ -237,13 +234,6 @@ class TickGuardTest(unittest.TestCase):
             self.assertEqual("nominated", queue["status"])
             self.assertEqual("implement", queue["execution_intent"])
             self.assertEqual("proposals/one.md", queue["proposal_path"])
-
-    def test_nomination_requires_a_local_proposal(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            write(root / "proactive.json", {"items": {"idea:one": {
-                "status": "ready-for-maintainer", "proposal_path": "proposals/missing.md"}}})
-            self.assertIn("no reviewable proposal", nomination_error(root, "idea:one"))
 
     def test_selected_idea_missing_from_new_graph_is_superseded(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -265,113 +255,11 @@ class TickGuardTest(unittest.TestCase):
                 sync_proactive(root, "2026-08-20T03:00:00Z")
             self.assertEqual('{broken', (root / "proactive.json").read_text())
 
-    def test_insight_decisions_are_latest_wins_and_resettable(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "insight-decisions.jsonl").write_text(
-                '{"idea_id":"idea:one","action":"select","ts":"1"}\n'
-                '{"idea_id":"idea:two","action":"dismiss","ts":"2"}\n'
-                '{"idea_id":"idea:one","action":"defer","ts":"3"}\n'
-                '{"idea_id":"idea:two","action":"reset","ts":"4"}\n', encoding="utf-8")
-            decisions = insight_decisions(root)
-            self.assertEqual("defer", decisions["idea:one"]["action"])
-            self.assertNotIn("idea:two", decisions)
-
-    def test_find_insight_idea_returns_its_parent_nodes(self):
-        idea = {"id": "idea:owner/repo:one"}
-        theme = {"id": "theme:owner/repo:a", "ideas": [idea]}
-        repo = {"id": "repo:owner/repo", "themes": [theme]}
-        self.assertEqual((repo, theme, idea), find_insight_idea({"repositories": [repo]}, idea["id"]))
-
-    def test_insights_canvas_exposes_graph_and_decision_controls(self):
+    def test_insights_page_ranks_themes_and_builds_them(self):
         page = Path(__file__).with_name("insights.html").read_text(encoding="utf-8")
         self.assertIn("/api/insights", page)
-        self.assertIn("/api/insight-decision", page)
-        self.assertIn("repository → theme → potential idea", page)
-        self.assertIn('data-action="select"', page)
-        self.assertIn('data-action="nominate"', page)
-        self.assertIn("Investigation complete — your next decision", page)
-        self.assertIn("Nominate for build", page)
-
-    def test_insight_validation_builds_stable_nodes_from_real_evidence(self):
-        records = []
-        for number in range(1, 4):
-            records.append({
-                "id": f"sig_{number}", "kind": "item_observed",
-                "repo": {"name": "owner/llmfit"},
-                "subject": {"id": f"repo:owner/llmfit/issue-{number}"},
-            })
-        candidate = {"v": 1, "generated_at": "2026-08-20T00:00:00Z", "repositories": [{
-            "name": "owner/llmfit", "posture": "heating", "summary": "Reports are rising.",
-            "themes": [{
-                "key": "session-expiry", "title": "Sessions expire unexpectedly",
-                "summary": "Three reports describe the same interrupted workflow.",
-                "state": "persistent", "confidence": "high", "momentum": "Three recent reports.",
-                "signal_ids": ["sig_1", "sig_2", "sig_3"],
-                "ideas": [{
-                    "key": "resume-session-reliably", "title": "Reliable session resumption",
-                    "problem": "Users lose work after sleep.", "state": "proposed",
-                    "rationale": "All three reports share the failure mode.",
-                    "scope": "medium — authentication lifecycle", "risk": "Token-provider variance.",
-                    "suggested_next_action": "Design and test refresh recovery.",
-                    "signal_ids": ["sig_1", "sig_2", "sig_3"],
-                }],
-            }],
-        }]}
-        result = validate_insights(candidate, records, {"owner/llmfit"})
-        theme = result["repositories"][0]["themes"][0]
-        self.assertEqual("theme:owner/llmfit:session-expiry", theme["id"])
-        self.assertEqual("idea:owner/llmfit:resume-session-reliably", theme["ideas"][0]["id"])
-        self.assertEqual(3, theme["distinct_items"])
-
-    def test_insight_validation_rejects_unsupported_recurrence(self):
-        records = [{"id": "sig_1", "kind": "item_observed",
-                    "repo": {"name": "owner/llmfit"},
-                    "subject": {"id": "repo:owner/llmfit/issue-1"}}]
-        candidate = {"v": 1, "repositories": [{
-            "name": "owner/llmfit", "posture": "stable", "summary": "Quiet.",
-            "themes": [{"key": "one-report", "title": "One report", "summary": "Only one.",
-                        "state": "recurring", "confidence": "low", "momentum": "Unknown.",
-                        "signal_ids": ["sig_1"], "ideas": []}],
-        }]}
-        with self.assertRaisesRegex(InvalidInsights, "requires 2 distinct"):
-            validate_insights(candidate, records, {"owner/llmfit"})
-
-    def test_insight_validation_counts_ref_scoped_events_but_not_metrics(self):
-        records = [
-            {"id": "event_1", "kind": "steward_event", "repo": {"name": "owner/llmfit"},
-             "subject": {"id": "repo:owner/llmfit/pr-1"}},
-            {"id": "event_2", "kind": "steward_event", "repo": {"name": "owner/llmfit"},
-             "subject": {"id": "repo:owner/llmfit/pr-2"}},
-            {"id": "metric", "kind": "repository_metric", "repo": {"name": "owner/llmfit"},
-             "subject": {"id": "repo:owner/llmfit"}},
-        ]
-        candidate = {"v": 1, "repositories": [{
-            "name": "owner/llmfit", "posture": "stable", "summary": "Two PR events.",
-            "themes": [{"key": "review-pattern", "title": "Review pattern",
-                        "summary": "Two PRs share a pattern.", "state": "recurring",
-                        "confidence": "medium", "momentum": "Current window.",
-                        "signal_ids": ["event_1", "event_2", "metric"], "ideas": []}],
-        }]}
-        result = validate_insights(candidate, records, {"owner/llmfit"})
-        self.assertEqual(2, result["repositories"][0]["themes"][0]["distinct_items"])
-
-    def test_insight_context_keeps_latest_item_revision(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "config.yaml").write_text("repos:\n  - name: owner/llmfit\n")
-            rows = [
-                {"id": "old", "ts": "2026-08-18T00:00:00Z", "kind": "item_observed",
-                 "repo": {"name": "owner/llmfit"}, "subject": {"id": "same"},
-                 "source": {"updated_at": "2026-08-18T00:00:00Z"}},
-                {"id": "new", "ts": "2026-08-19T00:00:00Z", "kind": "item_observed",
-                 "repo": {"name": "owner/llmfit"}, "subject": {"id": "same"},
-                 "source": {"updated_at": "2026-08-19T00:00:00Z"}},
-            ]
-            (root / "signals.jsonl").write_text(
-                "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
-            context = prepare_insights(root)
-            self.assertEqual(["new"], [row["id"] for row in context["signals"]])
+        self.assertIn("/api/build", page)
+        self.assertNotIn("/api/insight-decision", page)
 
     def test_signal_collection_is_deduplicated_and_keeps_evidence_separate(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -596,25 +484,25 @@ class TickGuardTest(unittest.TestCase):
             output = Path(tmp) / "dashboard.html"
             page = render(Path(__file__).parent, output)
             self.assertEqual(1, page.count('<meta charset="utf-8">'))
-            self.assertEqual(1, page.count('<main>'))
+            self.assertEqual(1, page.count('<main class="page" data-ops>'))
             self.assertEqual(1, page.count('</main>'))
-            self.assertIn('<div class="fleet">', page)
-            self.assertIn('data-item="pr-', page)
-            self.assertIn('<h2>Next tick <span class="count">', page)
+            self.assertIn('<body data-page="operations">', page)
+            self.assertIn('href="/assets/steward.css"', page)
+            self.assertIn('src="/assets/steward-shell.js"', page)
             self.assertIn('id="steward-controls"', page)
-            self.assertIn('class="site-nav"', page)
-            self.assertIn('href="/evaluation.html"', page)
-            self.assertIn('href="/audit.html"', page)
-            self.assertIn('aria-current="page">Operations', page)
-            self.assertIn('class="site-header dashboard-header"', page)
-            self.assertIn('data-mode-status', page)
+            self.assertLess(page.index("steward-shell.js"), page.index("steward-controls.js"))
+            for panel in ("decisions", "ready", "builds", "staged", "next", "activity"):
+                self.assertIn(f'data-panel="{panel}"', page)
+            self.assertIn('data-rail-repo=""', page)
+            self.assertIn('data-filter-input', page)
+            self.assertNotIn("<style", page)
             self.assertNotIn('([.items[]', page)
 
-    def test_dashboard_controls_do_not_inject_duplicate_navigation(self):
+    def test_operations_script_leaves_global_chrome_to_the_shell(self):
         source = Path(__file__).with_name("steward-controls.js").read_text(encoding="utf-8")
-        self.assertIn("headerActions.className = 'header-actions'", source)
-        self.assertNotIn("var auditLink =", source)
-        self.assertNotIn("var metricsLink =", source)
+        self.assertIn("window.Steward", source)
+        for global_only in ("/api/mode", "/api/tick", "/api/schedule", "/api/backend", "createElement('nav')"):
+            self.assertNotIn(global_only, source)
 
 
 if __name__ == "__main__":

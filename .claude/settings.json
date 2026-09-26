@@ -16,10 +16,12 @@
       "Bash(cargo build:*)",
       "Bash(cargo clippy:*)",
       "Bash(cargo fmt:*)",
+      "Bash(cargo check:*)",
       "Bash(go test:*)",
       "Bash(go build:*)",
       "Bash(npm test:*)",
       "Bash(npm run:*)",
+      "Bash(node --check:*)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)"
     ],

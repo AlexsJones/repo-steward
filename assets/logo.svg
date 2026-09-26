@@ -1,25 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Repo Steward logo">
-  <defs>
-    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#1D7A66"/>
-      <stop offset="1" stop-color="#0F4E42"/>
-    </linearGradient>
-  </defs>
+  <!-- Neo-industrial mark: an ink plate carrying two interlinked commit rings,
+       one off-white and one safety orange, with square commit nodes. -->
+  <rect width="256" height="256" fill="#141413"/>
 
-  <!-- tile -->
-  <rect width="256" height="256" rx="56" fill="url(#tile)"/>
+  <!-- ring A (off-white) -->
+  <circle cx="104" cy="128" r="46" fill="none" stroke="#E9E9E4" stroke-width="18"/>
+  <!-- ring B (signal) drawn over A -->
+  <circle cx="152" cy="128" r="46" fill="none" stroke="#E04E0B" stroke-width="18"/>
+  <!-- weave: ring A back on top at the lower crossing -->
+  <path d="M141.5 156.4 A46 46 0 0 1 113.5 172.7" fill="none" stroke="#E9E9E4" stroke-width="18" stroke-linecap="butt"/>
 
-  <!-- two interlinked commit-rings: repos held together by the steward -->
-  <!-- ring A (cream) -->
-  <circle cx="104" cy="128" r="46" fill="none" stroke="#ECF5F1" stroke-width="17"/>
-  <!-- ring B (teal) drawn over A -->
-  <circle cx="152" cy="128" r="46" fill="none" stroke="#8FD8C4" stroke-width="17"/>
-  <!-- weave: bring ring A back on top at the lower crossing -->
-  <path d="M141.5 156.4 A46 46 0 0 1 113.5 172.7" fill="none" stroke="#ECF5F1" stroke-width="17" stroke-linecap="butt"/>
-
-  <!-- commit nodes on each ring -->
-  <circle cx="58" cy="128" r="14" fill="#ECF5F1"/>
-  <circle cx="58" cy="128" r="6" fill="#0F4E42"/>
-  <circle cx="198" cy="128" r="14" fill="#8FD8C4"/>
-  <circle cx="198" cy="128" r="6" fill="#0F4E42"/>
+  <!-- square commit nodes -->
+  <rect x="42" y="112" width="32" height="32" fill="#E9E9E4"/>
+  <rect x="52" y="122" width="12" height="12" fill="#141413"/>
+  <rect x="182" y="112" width="32" height="32" fill="#E04E0B"/>
+  <rect x="192" y="122" width="12" height="12" fill="#141413"/>
 </svg>

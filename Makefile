@@ -9,7 +9,7 @@ DASH   := repo-steward-dash.service
 UPTIME := repo-steward-uptime.timer
 
 .DEFAULT_GOAL := help
-.PHONY: help install serve start stop restart tick timer-on timer-off status logs open audit audit-backfill signals insights evaluate test uninstall
+.PHONY: help install serve start stop restart tick timer-on timer-off status logs open audit audit-backfill signals insights build merge-ready evaluate test uninstall
 
 help: ## List targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -63,14 +63,20 @@ audit-backfill: ## Fold pre-existing history (approvals/decisions/usage) into th
 signals: ## Collect changed ledger/audit/metric evidence for insights
 	python3 signals.py collect
 
-insights: ## Run one evidence-backed insight sweep
+insights: ## Rank what is worth building next (GitHub read + one model session)
 	bash insights.sh
+
+build: ## Run the builds queued from the Insights page (opens PRs, never merges)
+	bash build.sh
+
+merge-ready: ## Squash-merge PRs signed off "Good to merge" (MERGE=1 to act; dry run otherwise)
+	python3 merge_ready.py $(if $(MERGE),--merge,)
 
 evaluate: ## Critically evaluate prior steward judgments and derive lessons
 	bash evaluate.sh
 
 test: ## Run the deterministic runner/ledger tests
-	python3 -m unittest -v test_tick_guard.py
+	python3 -m unittest -v test_tick_guard.py test_insights_builds.py test_work_status.py
 
 uninstall: ## Disable and stop every steward unit
 	-$(SC) disable --now $(TIMER) $(DASH) $(UPTIME) $(SVC)

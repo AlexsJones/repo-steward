@@ -1,261 +1,142 @@
+<!doctype html>
+<html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Repo Steward — Decision Log</title>
-<link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
-<meta http-equiv="refresh" content="300">
+<title>Audit · Repo Steward</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/logo-256.png">
+<link rel="stylesheet" href="/assets/steward.css">
 <style>
-  :root {
-    --bg: #EFF2F0; --panel: #FBFCFB; --panel-2: #F3F6F4;
-    --ink: #1C2321; --muted: #5C6B66; --line: #D8DFDB;
-    --accent: #175E54; --accent-soft: #E3EEEB;
-    --ok: #0B7D5E; --ok-soft: #E0EFE9;
-    --warn: #A66A1E; --warn-soft: #F5ECDC;
-    --crit: #B3452E; --crit-soft: #F6E4DF;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #111614; --panel: #181F1C; --panel-2: #1D2622;
-      --ink: #E4EAE7; --muted: #8CA097; --line: #2A342F;
-      --accent: #4FB39F; --accent-soft: #1B322D;
-      --ok: #149B77; --ok-soft: #16302A;
-      --warn: #D19A4A; --warn-soft: #33281A;
-      --crit: #E06A50; --crit-soft: #38211C;
-    }
-  }
-  :root[data-theme="light"] {
-    --bg: #EFF2F0; --panel: #FBFCFB; --panel-2: #F3F6F4;
-    --ink: #1C2321; --muted: #5C6B66; --line: #D8DFDB;
-    --accent: #175E54; --accent-soft: #E3EEEB;
-    --ok: #0B7D5E; --ok-soft: #E0EFE9;
-    --warn: #A66A1E; --warn-soft: #F5ECDC;
-    --crit: #B3452E; --crit-soft: #F6E4DF;
-  }
-  :root[data-theme="dark"] {
-    --bg: #111614; --panel: #181F1C; --panel-2: #1D2622;
-    --ink: #E4EAE7; --muted: #8CA097; --line: #2A342F;
-    --accent: #4FB39F; --accent-soft: #1B322D;
-    --ok: #149B77; --ok-soft: #16302A;
-    --warn: #D19A4A; --warn-soft: #33281A;
-    --crit: #E06A50; --crit-soft: #38211C;
-  }
-  * { box-sizing: border-box; }
-  body { background: var(--bg); color: var(--ink); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; padding: 0 20px 64px; }
-  main { max-width: 1100px; margin: 0 auto; }
-  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
-  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px 20px; padding: 28px 0 18px; border-bottom: 2px solid var(--accent); margin-bottom: 28px; }
-  h1 { font-family: "Iowan Old Style", Palatino, "Palatino Linotype", Georgia, serif; font-size: 28px; font-weight: 600; margin: 0; }
-  header nav { margin-left: auto; display: flex; gap: 16px; }
-  header nav a { font: 600 12px ui-monospace, Menlo, monospace; color: var(--accent); text-decoration: none; }
-  header nav a:hover { text-decoration: underline; }
-  section { margin-bottom: 36px; }
-  h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); margin: 0 0 12px; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; }
-  .empty { color: var(--muted); font-size: 14px; }
-  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
-  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
-  .tile .v { font: 600 26px/1.2 ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
-  .tile .k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin-top: 2px; }
-  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
-  .toolbar select, .toolbar input[type=search], .toolbar input[type=date] {
-    font: 600 12.5px ui-monospace, Menlo, monospace; padding: 7px 9px; border-radius: 7px;
-    border: 1px solid var(--line); background: var(--panel); color: var(--ink);
-  }
-  .toolbar select { cursor: pointer; }
-  .toolbar input[type=search] { flex: 1; min-width: 160px; font-weight: 400; }
-  .toolbar input[type=search]:focus, .toolbar input[type=date]:focus, .toolbar select:focus { outline: none; border-color: var(--accent); }
-  #count { font: 11.5px ui-monospace, Menlo, monospace; color: var(--muted); white-space: nowrap; }
-  .dl { display: flex; gap: 8px; }
-  .dl a, .dl button {
-    font: 600 12px ui-monospace, Menlo, monospace; padding: 8px 13px; border-radius: 8px;
-    border: 1px solid var(--accent); background: transparent; color: var(--accent);
-    text-decoration: none; cursor: pointer;
-  }
-  .dl a:hover, .dl button:hover { background: var(--accent-soft); }
-  .day { font: 600 11px ui-monospace, Menlo, monospace; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 18px 0 8px; }
-  .day:first-child { margin-top: 0; }
-  .ev { padding: 9px 13px; margin-bottom: 6px; border-radius: 7px; background: var(--panel); border: 1px solid var(--line); border-left-width: 3px; }
-  .ev .meta { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; font: 11.5px ui-monospace, Menlo, monospace; color: var(--muted); }
-  .ev .actor { font-weight: 600; padding: 1px 8px; border-radius: 999px; }
-  .ev .where { font-weight: 600; color: var(--ink); }
-  .ev .where a { color: inherit; text-decoration: none; }
-  .ev .where a:hover { text-decoration: underline; color: var(--accent); }
-  .ev .summary { font-size: 13.5px; line-height: 1.5; margin-top: 3px; }
-  .ev .detail { font: 11.5px/1.5 ui-monospace, Menlo, monospace; color: var(--muted); margin-top: 3px; word-break: break-word; }
-  .ev .fail { font-weight: 600; color: var(--crit); }
+  .toolbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  .toolbar input[type=search] { flex: 1; min-width: 180px; }
+  #events td.t { width: 1%; white-space: nowrap; font-family: var(--mono); color: var(--muted); }
+  #events td.ev { width: 1%; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
+  #events td.where { max-width: 240px; font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
+  #events .d { display: block; font: 11px/1.45 var(--mono); color: var(--muted); margin-top: 2px; word-break: break-word; }
+  #events tr[data-row] { cursor: pointer; }
 </style>
-<link rel="stylesheet" href="/assets/site-nav.css">
-
-<main>
-  <header class="site-header">
-    <h1>Decision Log</h1>
-    <span class="dl">
-      <a href="/audit.jsonl" download="audit.jsonl" title="The raw append-only log, one JSON event per line">⬇ audit.jsonl</a>
-      <button id="dl-csv" title="The events currently shown below, as CSV">⬇ filtered CSV</button>
-    </span>
-    <nav class="site-nav" aria-label="Primary navigation">
-      <a href="/dashboard.html">Operations</a>
-      <a href="/insights.html">Insights</a>
-      <a href="/evaluation.html">Self-evaluation</a>
-      <a href="/metrics.html">Metrics</a>
-      <a href="/audit.html" aria-current="page">Audit</a>
-    </nav>
-  </header>
-
-  <section>
-    <h2>Totals</h2>
-    <div class="tiles" id="tiles"><div class="card empty" style="grid-column:1/-1">loading…</div></div>
-  </section>
-
-  <section>
-    <h2>Events</h2>
-    <div class="toolbar">
-      <select id="f-actor"></select>
-      <select id="f-event"></select>
-      <select id="f-repo"></select>
-      <input id="f-date" type="date" title="filter to a single day (YYYY-MM-DD); clear to see all">
-      <input id="f-q" type="search" placeholder="search summaries, details, items…">
-      <span id="count"></span>
+</head>
+<body data-page="audit">
+<main class="page">
+  <div class="page-head"><h1>Audit</h1><span class="sub">append-only decision log: everything you, the steward and the system did</span>
+    <div class="tools">
+      <a class="btn ghost" href="/audit.jsonl" download="audit.jsonl" title="The raw append-only log, one JSON event per line">↓ audit.jsonl</a>
+      <button class="btn ghost" id="dl-csv" title="The events currently shown, as CSV">↓ Filtered CSV</button>
     </div>
-    <div id="list" class="empty">loading…</div>
+  </div>
+  <div class="readout" id="tiles"><div><span class="label">Loading</span><b>…</b></div></div>
+  <section class="panel">
+    <div class="panel-head"><h2>Events</h2><span class="count" id="count"></span></div>
+    <div class="toolbar">
+      <select class="field" id="f-actor"></select>
+      <select class="field" id="f-event"></select>
+      <select class="field" id="f-repo"></select>
+      <input class="field" id="f-date" type="date" title="Filter to one day; clear to see all">
+      <input class="field" id="f-q" type="search" data-filter-input placeholder="search summaries, details, refs  /">
+    </div>
+    <div class="tablewrap"><table class="grid" id="events"><thead><tr><th>Time</th><th>Actor</th><th>Event</th><th>Where</th><th>What</th></tr></thead><tbody id="list"><tr><td colspan="5" class="empty">loading…</td></tr></tbody></table></div>
   </section>
 </main>
-
+<script src="/assets/steward-shell.js"></script>
 <script>
 (function () {
-  var LIMIT = 2000;
-  var events = [];
-
-  function esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-    });
-  }
-  var TONE = { maintainer: 'accent', steward: 'ok', system: 'warn' };
-  var ICON = { approve: '✓', dismiss: '✗', decision_recorded: '💬', decision_executed: '⚡',
-               terminal: '⏹', config_change: '⚙', tick_requested: '▶', tick_done: '⟳',
-               decide_done: '⚡', steward_action: '🤖' };
+  var LIMIT = 2000, events = [], esc = Steward.esc;
+  var TONE = { maintainer: 'solid', steward: 'info', system: '' };
+  var $ = function (id) { return document.getElementById(id); };
 
   function filtered() {
-    var a = document.getElementById('f-actor').value;
-    var e = document.getElementById('f-event').value;
-    var r = document.getElementById('f-repo').value;
-    var d = document.getElementById('f-date').value;
-    var q = document.getElementById('f-q').value.trim().toLowerCase();
+    var a = $('f-actor').value, e = $('f-event').value, r = $('f-repo').value, d = $('f-date').value;
+    var q = $('f-q').value.trim().toLowerCase();
     return events.filter(function (ev) {
       if (a && ev.actor !== a) return false;
       if (e && ev.event !== e) return false;
       if (r && ev.repo !== r) return false;
       if (d && (ev.ts || '').slice(0, 10) !== d) return false;
-      if (q) {
-        var hay = [ev.summary, ev.detail, ev.repo, ev.ref, ev.event].join(' ').toLowerCase();
-        if (hay.indexOf(q) === -1) return false;
-      }
+      if (q && [ev.summary, ev.detail, ev.repo, ev.ref, ev.event].join(' ').toLowerCase().indexOf(q) === -1) return false;
       return true;
-    }).slice().reverse();                       // newest first
+    }).slice().reverse();
   }
 
-  function row(e) {
-    var tone = TONE[e.actor] || 'warn';
-    var failed = e.ok === false;
-    var kind = (e.data && e.data.kind) ? ' · ' + e.data.kind : '';
-    return '<div class="ev" style="border-left-color:var(--' + (failed ? 'crit' : tone) + ')" title="' + esc(JSON.stringify(e)) + '">' +
-      '<div class="meta">' +
-      '<span>' + esc((e.ts || '').slice(11, 19)) + '</span>' +
-      '<span class="actor" style="background:var(--' + tone + '-soft);color:var(--' + tone + ')">' + esc(e.actor || '?') + '</span>' +
-      '<span>' + (ICON[e.event] || '·') + ' ' + esc(e.event || '?') + esc(kind) + '</span>' +
-      (e.repo ? '<span class="where">' + esc(e.repo) +
-        (e.ref ? ' ' + (e.url ?
-          '<a href="' + esc(e.url) + '" target="_blank" rel="noopener">' + esc(e.ref) + '</a>' :
-          esc(e.ref)) : '') +
-        '</span>' : '') +
-      (e.via ? '<span>via ' + esc(e.via) + '</span>' : '') +
-      (failed ? '<span class="fail">failed</span>' : '') +
-      '</div>' +
-      (e.summary ? '<div class="summary">' + esc(e.summary) + '</div>' : '') +
-      (e.detail && e.detail !== e.summary ? '<div class="detail">' + esc(e.detail) + '</div>' : '') +
-      '</div>';
+  function row(e, i) {
+    var failed = e.ok === false, kind = e.data && e.data.kind ? ' · ' + e.data.kind : '';
+    var where = e.repo ? esc(e.repo) + (e.ref ? ' ' + (e.url ? '<a href="' + esc(e.url) + '" target="_blank" rel="noopener">' + esc(e.ref) + '</a>' : esc(e.ref)) : '') : '<span class="muted">—</span>';
+    return '<tr data-row data-nav data-i="' + i + '"><td class="t">' + esc((e.ts || '').slice(11, 19)) + '</td>' +
+      '<td class="w-id"><span class="st ' + (TONE[e.actor] || '') + '">' + esc(e.actor || '?') + '</span></td>' +
+      '<td class="ev">' + esc(e.event || '?') + esc(kind) + (failed ? ' <span class="st crit">failed</span>' : '') +
+      (e.via ? '<span class="d">via ' + esc(e.via) + '</span>' : '') + '</td>' +
+      '<td class="where">' + where + '</td>' +
+      '<td>' + esc(e.summary || '') + (e.detail && e.detail !== e.summary ? '<span class="d">' + esc(e.detail) + '</span>' : '') + '</td></tr>';
   }
 
+  var shown = [];
   function render() {
-    var evs = filtered();
+    shown = filtered();
     var out = [], lastDay = null;
-    evs.forEach(function (e) {
+    shown.forEach(function (e, i) {
       var day = (e.ts || '').slice(0, 10);
-      if (day !== lastDay) { out.push('<div class="day">' + esc(day || 'undated') + '</div>'); lastDay = day; }
-      out.push(row(e));
+      if (day !== lastDay) { out.push('<tr class="group"><td colspan="5">' + esc(day || 'undated') + '</td></tr>'); lastDay = day; }
+      out.push(row(e, i));
     });
-    var list = document.getElementById('list');
-    list.className = '';
-    list.innerHTML = out.join('') ||
-      '<div class="card empty">No events match. The log collects from the moment the feature landed — <span class="mono">make audit-backfill</span> folds in older history.</div>';
-    document.getElementById('count').textContent = evs.length + ' of ' + events.length + ' event' + (events.length === 1 ? '' : 's') +
-      (events.length >= LIMIT ? ' (most recent ' + LIMIT + ' — the full file has more)' : '');
+    $('list').innerHTML = out.join('') ||
+      '<tr><td colspan="5" class="empty">No events match. Clear the date to see every day; <code>make audit-backfill</code> folds in older history.</td></tr>';
+    $('count').textContent = shown.length + ' / ' + events.length + (events.length >= LIMIT ? ' (latest ' + LIMIT + ')' : '');
   }
+
+  function toggle(tr) {
+    var next = tr.nextElementSibling;
+    if (next && next.classList.contains('detail')) { next.remove(); return; }
+    var d = document.createElement('tr');
+    d.className = 'detail';
+    d.innerHTML = '<td colspan="5"><pre></pre></td>';
+    d.querySelector('pre').textContent = JSON.stringify(shown[+tr.dataset.i], null, 2);
+    tr.parentNode.insertBefore(d, next);
+  }
+  $('list').addEventListener('click', function (e) {
+    var tr = e.target.closest('tr[data-row]');
+    if (tr && !e.target.closest('a')) toggle(tr);
+  });
+  Steward.nav({ rows: function () { return Array.prototype.slice.call(document.querySelectorAll('#list tr[data-nav]')); }, open: toggle });
 
   function tiles() {
-    var byActor = { maintainer: 0, steward: 0, system: 0 };
-    var merges = 0, decisions = 0, failures = 0;
+    var by = { maintainer: 0, steward: 0, system: 0 }, merges = 0, decisions = 0, builds = 0, failures = 0;
     events.forEach(function (e) {
-      if (byActor[e.actor] != null) byActor[e.actor]++;
+      if (by[e.actor] != null) by[e.actor]++;
       if ((e.event === 'approve' && e.data && e.data.merged) ||
           (e.event === 'terminal' && e.data && e.data.action === 'merge' && e.ok !== false)) merges++;
       if (e.event === 'decision_recorded') decisions++;
+      if (e.event === 'build_done' && e.ok) builds++;
       if (e.ok === false) failures++;
     });
-    document.getElementById('tiles').innerHTML = [
-      [events.length, 'events'],
-      [byActor.maintainer, 'by you'],
-      [byActor.steward, 'by the steward'],
-      [merges, 'merges'],
-      [decisions, 'decisions typed'],
-      [failures, 'failed actions'],
-    ].map(function (t) {
-      return '<div class="tile"><div class="v"><span class="mono">' + t[0] + '</span></div><div class="k">' + t[1] + '</div></div>';
-    }).join('');
+    $('tiles').innerHTML = [['Events', events.length], ['By you', by.maintainer], ['By the steward', by.steward],
+      ['Merges', merges], ['Decisions typed', decisions], ['Builds opened', builds], ['Failed', failures, failures > 0]]
+      .map(function (t) { return '<div class="' + (t[2] ? 'sig' : '') + '"><span class="label">' + t[0] + '</span><b>' + t[1] + '</b></div>'; }).join('');
   }
 
-  function csv() {
+  $('dl-csv').addEventListener('click', function () {
     var cols = ['ts', 'actor', 'via', 'event', 'repo', 'ref', 'ok', 'summary', 'detail'];
-    function cell(v) {
-      v = v == null ? '' : String(v);
-      return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
-    }
-    var lines = [cols.join(',')].concat(filtered().map(function (e) {
-      return cols.map(function (c) { return cell(e[c]); }).join(',');
-    }));
-    var blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv' });
+    function cell(v) { v = v == null ? '' : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+    var lines = [cols.join(',')].concat(filtered().map(function (e) { return cols.map(function (c) { return cell(e[c]); }).join(','); }));
     var a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'decision-log.csv';
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }
-  document.getElementById('dl-csv').addEventListener('click', csv);
+    a.href = URL.createObjectURL(new Blob([lines.join('\n') + '\n'], { type: 'text/csv' }));
+    a.download = 'decision-log.csv'; a.click(); URL.revokeObjectURL(a.href);
+  });
 
-  fetch('/api/audit?limit=' + LIMIT).then(function (r) { return r.json(); }).then(function (res) {
+  Steward.api('/api/audit?limit=' + LIMIT).then(function (res) {
     events = res.events || [];
     function fill(id, label, key) {
-      var seen = {};
-      var vals = events.map(function (e) { return e[key]; })
+      var seen = {}, vals = events.map(function (e) { return e[key]; })
         .filter(function (v) { return v && !seen[v] && (seen[v] = 1); }).sort();
-      var sel = document.getElementById(id);
-      sel.innerHTML = '<option value="">' + label + '</option>' +
-        vals.map(function (v) { return '<option>' + esc(v) + '</option>'; }).join('');
-      sel.addEventListener('change', render);
+      $(id).innerHTML = '<option value="">' + label + '</option>' + vals.map(function (v) { return '<option>' + esc(v) + '</option>'; }).join('');
+      $(id).addEventListener('change', render);
     }
-    fill('f-actor', 'all actors', 'actor');
-    fill('f-event', 'all events', 'event');
-    fill('f-repo', 'all repos', 'repo');
-    var dateEl = document.getElementById('f-date');
-    dateEl.value = new Date().toISOString().slice(0, 10);
-    dateEl.addEventListener('change', render);
-    document.getElementById('f-q').addEventListener('input', render);
-    tiles();
-    render();
+    fill('f-actor', 'all actors', 'actor'); fill('f-event', 'all events', 'event'); fill('f-repo', 'all repos', 'repo');
+    $('f-date').value = new Date().toISOString().slice(0, 10);
+    $('f-date').addEventListener('change', render);
+    $('f-q').addEventListener('input', render);
+    tiles(); render();
   }).catch(function () {
-    document.getElementById('list').innerHTML =
-      '<div class="card empty">API unreachable — this page needs to be served by server.py.</div>';
-    document.getElementById('tiles').innerHTML = '';
+    $('list').innerHTML = '<tr><td colspan="5" class="empty">API unreachable: this page needs server.py.</td></tr>';
+    $('tiles').innerHTML = '';
   });
 })();
 </script>
+</body></html>

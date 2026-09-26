@@ -65,8 +65,12 @@ JQ_BIN="$(command -v jq || true)"
 # invisible to the tick — `command -v` in this shell proves nothing about what
 # the service resolves. tick.sh/decide.sh call `gh` and `jq` by bare name, so
 # carry the directories of the tools we actually resolved into the unit's PATH.
+# Toolchains are optional, but fix PRs and Insights builds run each repo's own
+# tests, so carry whichever of them this shell can see (e.g. ~/.cargo/bin).
 STEWARD_PATH=""
-for _d in "$ENGINE_BIN" "$GH_BIN" "$JQ_BIN" "$PYTHON_BIN" /usr/local/bin /usr/bin; do
+for _d in "$ENGINE_BIN" "$GH_BIN" "$JQ_BIN" "$PYTHON_BIN" \
+          "$(command -v cargo || true)" "$(command -v go || true)" \
+          "$(command -v node || true)" "$(command -v npm || true)" /usr/local/bin /usr/bin; do
   [[ -n "$_d" ]] || continue
   [[ -d "$_d" ]] || _d="$(dirname "$_d")"
   case ":$STEWARD_PATH:" in *":$_d:"*) ;; *) STEWARD_PATH="${STEWARD_PATH:+$STEWARD_PATH:}$_d" ;; esac

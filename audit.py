@@ -9,7 +9,7 @@ Schema v1 — one JSON object per line:
   v        1 (schema version)
   ts       UTC ISO-8601, when the thing happened
   actor    maintainer | steward | system
-  via      dashboard | tick | decide | insights | evaluation
+  via      dashboard | tick | decide | insights | evaluation | build | merge_ready
   event    what happened (see below)
   repo     short repo name; absent when not repo-scoped
   ref      ledger key (pr-123 / issue-45 / disc-7); absent when not item-scoped
@@ -28,9 +28,16 @@ Events:
   terminal           explicit maintainer merge/close executed via /api/terminal
   config_change      mode / schedule / limits / watch changed from the dashboard
   tick_requested     maintainer started a tick from the dashboard
+  tick_cancelled     maintainer stopped a running tick from the dashboard
   tick_done          a tick finished (ts = the tick's start, matching usage.jsonl)
   decide_done        a decision-executor run finished
-  insights_done      a validated out-of-band insight graph was published
+  analysis_requested maintainer started an insight sweep or self-evaluation
+                     from the dashboard; data.job names which
+  analysis_cancelled maintainer stopped a running sweep or self-evaluation
+                     from the dashboard; data.job names which
+  insights_done      a validated build-candidate sweep was published
+  build_requested    the maintainer clicked Build on an Insights theme
+  build_done         a build run finished: PR opened, blocked, or failed
   insight_decision   maintainer selected, deferred, dismissed, or reset an idea
   evaluation_done    a validated critical self-evaluation was published
   steward_action     one discrete thing the steward did or observed in a run —
