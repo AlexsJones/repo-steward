@@ -69,14 +69,14 @@ insights: ## Rank what is worth building next (GitHub read + one model session)
 build: ## Run the builds queued from the Insights page (opens PRs, never merges)
 	bash build.sh
 
-merge-ready: ## Squash-merge PRs signed off "Good to merge" (MERGE=1 to act; dry run otherwise)
-	python3 merge_ready.py $(if $(MERGE),--merge,)
+merge-ready: ## Squash-merge PRs signed off "Good to merge" (MERGE=1 to act, LIMIT=N to cap; dry run otherwise)
+	python3 merge_ready.py $(if $(MERGE),--merge,) $(if $(LIMIT),--limit $(LIMIT),)
 
 evaluate: ## Critically evaluate prior steward judgments and derive lessons
 	bash evaluate.sh
 
 test: ## Run the deterministic runner/ledger tests
-	python3 -m unittest -v test_tick_guard.py test_insights_builds.py test_work_status.py
+	python3 -m unittest -v test_tick_guard.py test_insights_builds.py test_work_status.py test_merge_queue.py
 
 uninstall: ## Disable and stop every steward unit
 	-$(SC) disable --now $(TIMER) $(DASH) $(UPTIME) $(SVC)

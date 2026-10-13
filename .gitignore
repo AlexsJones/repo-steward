@@ -40,3 +40,4 @@ builds/
 .builds.json.lock
 .merge_ready_updates.json
 insights.v1.json
+merge_queue.json

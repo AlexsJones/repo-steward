@@ -175,6 +175,31 @@ if [[ "$(jq -r '.ok // false' <<<"$REVIEW_CHECK" 2>/dev/null)" != "true" ]]; the
   (( RC == 0 )) && RC=80
 fi
 
+# Merge queue: the maintainer's standing good-to-merge rule, applied
+# mechanically (gh only, no agent judgement). Eligible PRs are worked oldest
+# sign-off first, at most limits.merges_per_tick per tick; the rest wait for
+# the next tick. Draft mode only reports the queue. Runs whatever the engine's
+# exit status, since it needs no engine, and never fails the tick by itself.
+printf '{"ts":"%s","phase":"repo","msg":"working the merge queue"}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> progress.jsonl
+MERGE_OUT="$(python3 merge_ready.py --tick 2>&1)"
+MERGE_RC=$?
+{ echo "=== tick $TS merge queue (rc=$MERGE_RC) ==="; grep -v '^SUMMARY ' <<<"$MERGE_OUT"; } >> logs/tick.log
+MERGE_SUMMARY="$(sed -n 's/^SUMMARY //p' <<<"$MERGE_OUT" | tail -1)"
+if [[ -n "$MERGE_SUMMARY" ]]; then
+  printf '{"ts":"%s","phase":"repo","msg":"merge queue: %s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "$(jq -r '"\(.merged) merged, \(.queued) queued, \(.failed) failed, \(.waiting) waiting"' <<<"$MERGE_SUMMARY")" >> progress.jsonl
+  jq -cn --arg ts "$TS" --argjson s "$MERGE_SUMMARY" \
+    '{v:1,ts:$ts,actor:"system",via:"tick",event:"merge_queue",ok:($s.failed == 0),
+      summary:("merge queue: " + ($s.merged|tostring) + " merged, " + ($s.queued|tostring) +
+        " queued, " + ($s.failed|tostring) + " failed, " + ($s.waiting|tostring) + " waiting"),
+      data:$s}' >> audit.jsonl
+else
+  jq -cn --arg ts "$TS" --arg out "$(tail -c 300 <<<"$MERGE_OUT")" \
+    '{v:1,ts:$ts,actor:"system",via:"tick",event:"merge_queue",ok:false,
+      summary:"merge queue did not run",detail:$out}' >> audit.jsonl
+fi
+
 # The agent owns operational judgement, not frontend generation. Render from
 # the repaired ledgers and audit trail so every tick produces valid, stable DOM.
 if ! python3 render_dashboard.py 2>>logs/tick.log; then

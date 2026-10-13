@@ -158,6 +158,38 @@ def load_builds(root: Path) -> list[dict]:
     return sorted(items.values(), key=lambda b: b.get("requested_at") or "", reverse=True)
 
 
+MERGE_STATUS = {"merged": ("ok", "merged"), "queued": ("info", "auto-merge queued"),
+                "failed": ("crit", "failed"), "waiting": ("", "waiting"),
+                "skipped": ("warn", "skipped")}
+
+
+def merge_queue(root: Path, tick_ts: str) -> dict | None:
+    """The merge phase's snapshot for the latest tick, or None when that tick
+    had no merge phase (the file is from an older tick or a manual run)."""
+    try:
+        snap = json.loads((root / "merge_queue.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return snap if tick_ts and snap.get("ts", "") >= tick_ts else None
+
+
+def merge_history(root: Path, ticks=10) -> list[dict]:
+    """Per-tick merge_queue summaries from the audit log, oldest first."""
+    path = root / "audit.jsonl"
+    out = []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if '"merge_queue"' not in line:
+                continue
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if e.get("event") == "merge_queue" and isinstance(e.get("data"), dict):
+                out.append({"ts": e.get("ts", ""), **e["data"]})
+    return out[-ticks:]
+
+
 def day(ts: str) -> str:
     return (ts or "")[:10]
 
@@ -198,6 +230,8 @@ def render(root: Path = ROOT, output: Path | None = None) -> str:
     builds = load_builds(root)
     open_builds = builds[:12]
     tick_ts = tick.get("ts", "") if tick else ""
+    merges = merge_queue(root, tick_ts)
+    history = merge_history(root)
 
     per_repo = {r["short"]: {"issues": 0, "prs": 0} for r in repos}
     for repo, _, item in all_items:
@@ -225,6 +259,8 @@ def render(root: Path = ROOT, output: Path | None = None) -> str:
 
     cells = [("Decisions", len(decisions), "decisions", bool(decisions)),
              ("Ready to merge", len(ready), "ready", False),
+             ("Merged · tick", len(merges["merged"]) if merges else "—", "merges",
+              bool(merges and merges["failed"])),
              ("Staged", len(staged), "staged", False),
              ("Building", sum(b.get("status") in {"queued", "building"} for b in builds), "builds", False),
              ("Next tick", len(planned), "next", False),
@@ -269,6 +305,54 @@ def render(root: Path = ROOT, output: Path | None = None) -> str:
     out.append(panel("decisions", "Decisions needed", len(decisions),
                      "".join(body) or empty("No decisions need you."), attn=True,
                      hint="type a decision; the steward carries it out"))
+
+    # Merge queue (tick.sh's good-to-merge phase)
+    if merges:
+        used = len(merges["merged"]) + len(merges["queued"]) + len(merges["failed"])
+        recent = sum(h.get("merged", 0) for h in history)
+        stats = [("Merged", len(merges["merged"]), "squash-merged now"),
+                 ("Auto-merge", len(merges["queued"]), "branch updated, merges on green"),
+                 ("Failed", len(merges["failed"]), "see detail"),
+                 ("Waiting", len(merges["waiting"]), "eligible, next tick"),
+                 ("Skipped", len(merges["skipped"]), "rule says no"),
+                 ("Budget", f"{used}/{merges.get('limit')}", "merges_per_tick"
+                  + ("" if merges.get("acting") else f" · {merges.get('mode')}: not acting")),
+                 (f"Last {len(history)} ticks", recent, "merged in total")]
+        strip = ('<div class="readout" style="margin:0;border-width:0 0 1px 0">' + "".join(
+            f'<div class="{"sig" if label == "Failed" and value else ""}"><span class="label">{esc(label)}</span>'
+            f'<b>{esc(str(value))}</b><small>{esc(sub)}</small></div>' for label, value, sub in stats) + "</div>")
+        spark = ""
+        if len(history) > 1:
+            peak = max(max(h.get("merged", 0) + h.get("queued", 0) for h in history), 1)
+            bars = "".join(
+                f'<span title="{esc(h["ts"][:16].replace("T", " "))}: {h.get("merged", 0)} merged, '
+                f'{h.get("queued", 0)} queued, {h.get("waiting", 0)} waiting" style="display:flex;flex-direction:column;'
+                f'justify-content:flex-end;width:14px;height:32px">'
+                f'<i style="display:block;height:{round(28 * h.get("queued", 0) / peak)}px;background:var(--info-soft)"></i>'
+                f'<i style="display:block;height:{max(round(28 * h.get("merged", 0) / peak), 1)}px;background:var(--ok)"></i></span>'
+                for h in history)
+            spark = ('<div style="display:flex;align-items:flex-end;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line)">'
+                     f'<span class="muted" style="font:11px var(--mono)">merged per tick</span>'
+                     f'<div style="display:flex;align-items:flex-end;gap:3px">{bars}</div></div>')
+        rows = []
+        for status in ("merged", "queued", "failed", "waiting", "skipped"):
+            tone, label = MERGE_STATUS[status]
+            for e in merges.get(status) or []:
+                short = (e.get("repo") or "").split("/")[-1]
+                since = e.get("approved_at") or ""
+                rows.append(f'<tr data-repo="{esc(short)}" data-row>'
+                            f'<td class="w-id"><a href="{esc(e.get("url"))}" target="_blank" rel="noopener">{esc(short)}#{esc(e.get("number"))}</a></td>'
+                            f'<td><span class="title">{esc(e.get("title"))}</span><span class="sub">{esc(e.get("detail"))}</span></td>'
+                            f'<td class="w-id"><span class="st {tone}">{esc(label)}</span></td>'
+                            f'<td class="w-id num" data-ts="{esc(since)}">{esc(day(since)) or "—"}</td></tr>')
+        table = ('<div class="tablewrap"><table class="grid"><thead><tr><th>PR</th><th>Title</th><th>State</th><th>Signed off</th></tr></thead>'
+                 f'<tbody>{"".join(rows)}</tbody></table></div>') if rows else empty("No PRs carry a Good to merge sign-off.")
+        body = strip + spark + table
+    else:
+        body = empty("The latest tick had no merge phase.")
+    total = sum(len(merges.get(k) or []) for k in MERGE_STATUS) if merges else 0
+    out.append(panel("merges", "Merge queue · this tick", total, body,
+                     hint="good-to-merge rule, oldest sign-off first"))
 
     # Ready
     rows = []

@@ -10,13 +10,18 @@ The maintainer's standing rule (decisions.jsonl, 2026-09-25): a PR merges when
   - it is not a critical feature change: no `feat` or breaking (`!`) title,
     and no major-version dependency bump.
 
-No engine, no tokens: gh only. Dry run by default.
+No engine, no tokens: gh only. Dry run by default. Eligible PRs form a queue,
+oldest steward sign-off first; --limit caps how many one run acts on, and the
+rest wait for the next run.
 
-  python3 merge_ready.py            # list what would merge, and why others don't
-  python3 merge_ready.py --merge    # squash-merge the eligible ones
+  python3 merge_ready.py                    # list what would merge, and why others don't
+  python3 merge_ready.py --merge            # squash-merge the eligible ones
+  python3 merge_ready.py --merge --limit 5  # just the five longest-waiting
+  python3 merge_ready.py --tick             # tick.sh's merge phase (see STEWARD.md)
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -133,22 +138,26 @@ def squash(pr, full, updates, auto_merge):
                        else f"branch updated; auto-merge failed: {out}")
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--merge", action="store_true", help="squash-merge eligible PRs")
-    args = ap.parse_args()
+def merges_per_tick(default=10):
+    """limits.merges_per_tick from config.yaml; 0 turns the tick's merge
+    queue off."""
+    m = re.search(r"^\s*merges_per_tick:\s*(\d+)", (ROOT / "config.yaml").read_text(), re.M)
+    return int(m.group(1)) if m else default
 
-    if args.merge and (server.tick_active() or server.decide_active()):
-        sys.exit("steward busy (tick or decision run in progress): try again when it finishes")
-    ok, steward = gh(["api", "user", "--jq", ".login"])
-    if not ok:
-        sys.exit(f"gh auth failed: {steward}")
 
-    merged = 0
-    updates = load_updates()
+def approved_at(pr, steward):
+    """When the steward's latest review was submitted: the queue's order."""
+    mine = [r for r in pr.get("reviews") or []
+            if (r.get("author") or {}).get("login") == steward]
+    return (mine[-1].get("submittedAt") or "") if mine else ""
+
+
+def collect(steward, updates):
+    """Every open PR carrying a "good to merge" review, as (eligible, skipped):
+    eligible entries are (approved_at, repo, pr, reason), oldest first."""
+    eligible_prs, skipped = [], []
     for repo in server.repos_config():
         full = repo["name"]
-        auto_merge = None
         # Reviews only: asking for check rollups across a busy repo's whole
         # open list makes GitHub's GraphQL endpoint 502.
         ok, out = gh(["pr", "list", "-R", full, "--state", "open", "-L", "200",
@@ -164,35 +173,100 @@ def main():
                 print(f"{full}#{listed['number']}: gh pr view failed: {out[:200]}")
                 continue
             pr = json.loads(out)
-            ref = f"{full}#{pr['number']}"
             go, reason = eligible(pr, steward, full, updates)
-            if not go:
-                print(f"skip  {ref}  {pr['title'][:60]}  ({reason})")
-                continue
-            if not args.merge:
-                behind = " (behind base: update, then auto-merge)" if pr["mergeStateStatus"] == "BEHIND" else ""
-                print(f"would {ref}  {pr['title'][:60]}{behind}")
-                continue
-            if auto_merge is None:
-                ok, out = gh(["api", f"repos/{full}", "--jq", ".allow_auto_merge"])
-                auto_merge = ok and out == "true"
-            ok, done, detail = squash(pr, full, updates, auto_merge)
-            label = "MERGED" if done else "QUEUED" if ok else "FAILED"
-            print(f"{label} {ref}  {pr['title'][:60]}  {detail[:200]}")
-            merged += done
-            with open(ROOT / "approvals.jsonl", "a") as f:
-                f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                                    "repo": full, "action": "good-to-merge",
-                                    "item": f"pr-{pr['number']}", "ok": ok,
-                                    "detail": f"squash: {detail}"[:300],
-                                    "reason": reason}) + "\n")
-            audit.append("terminal", "maintainer", "merge_ready", repo=full.split("/")[1],
-                         ref=f"pr-{pr['number']}", ok=ok, detail=detail,
-                         summary=f"good-to-merge rule: squash-merge pr #{pr['number']} — {reason}",
-                         data={"action": "merge", "method": "squash",
-                               "head": pr["headRefOid"], "rule": "good-to-merge"})
+            if go:
+                eligible_prs.append((approved_at(pr, steward), full, pr, reason))
+            else:
+                skipped.append((full, pr, reason))
+    # Oldest sign-off first: an approval nobody has merged has waited longest.
+    eligible_prs.sort(key=lambda e: e[0])
+    return eligible_prs, skipped
+
+
+def entry(full, pr, detail, approved=None):
+    out = {"repo": full, "number": pr["number"], "title": pr.get("title", ""),
+           "url": f"https://github.com/{full}/pull/{pr['number']}", "detail": detail}
+    if approved is not None:
+        out["approved_at"] = approved
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--merge", action="store_true", help="squash-merge eligible PRs")
+    ap.add_argument("--limit", type=int, default=None,
+                    help="act on at most N eligible PRs, oldest sign-off first")
+    ap.add_argument("--tick", action="store_true",
+                    help="run as tick.sh's merge phase: cap at limits.merges_per_tick, "
+                         "merge only in live mode, write merge_queue.json")
+    args = ap.parse_args()
+
+    limit = args.limit
+    if args.tick and not os.environ.get("STEWARD_RUNNING_TICK"):
+        sys.exit("--tick is tick.sh's merge phase; run with --merge [--limit N] by hand")
+    if args.tick:
+        if limit is None:
+            limit = merges_per_tick()
+        # Draft mode posts nothing to GitHub, merges included: report the
+        # queue, act on none of it.
+        args.merge = args.merge or server.steward_mode() == "live"
+        if limit == 0:
+            args.merge = False
+    elif args.merge and (server.tick_active() or server.decide_active()):
+        sys.exit("steward busy (tick or decision run in progress): try again when it finishes")
+    ok, steward = gh(["api", "user", "--jq", ".login"])
+    if not ok:
+        sys.exit(f"gh auth failed: {steward}")
+
+    updates = load_updates()
+    candidates, skipped = collect(steward, updates)
+    for full, pr, reason in skipped:
+        print(f"skip  {full}#{pr['number']}  {pr['title'][:60]}  ({reason})")
+
+    result = {"merged": [], "queued": [], "failed": [], "waiting": [],
+              "skipped": [entry(full, pr, reason) for full, pr, reason in skipped]}
+    acted = 0
+    auto_merge = {}
+    for approved, full, pr, reason in candidates:
+        ref = f"{full}#{pr['number']}"
+        behind = " (behind base: update, then auto-merge)" if pr["mergeStateStatus"] == "BEHIND" else ""
+        if not args.merge or (limit is not None and acted >= limit):
+            word = "would" if not args.merge else "wait "
+            print(f"{word} {ref}  {pr['title'][:60]}{behind}")
+            result["waiting"].append(entry(full, pr, reason + behind, approved))
+            continue
+        if full not in auto_merge:
+            ok, out = gh(["api", f"repos/{full}", "--jq", ".allow_auto_merge"])
+            auto_merge[full] = ok and out == "true"
+        ok, done, detail = squash(pr, full, updates, auto_merge[full])
+        acted += 1
+        label = "MERGED" if done else "QUEUED" if ok else "FAILED"
+        print(f"{label} {ref}  {pr['title'][:60]}  {detail[:200]}")
+        result["merged" if done else "queued" if ok else "failed"].append(
+            entry(full, pr, detail[:300], approved))
+        with open(ROOT / "approvals.jsonl", "a") as f:
+            f.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                                "repo": full, "action": "good-to-merge",
+                                "item": f"pr-{pr['number']}", "ok": ok,
+                                "detail": f"squash: {detail}"[:300],
+                                "reason": reason}) + "\n")
+        audit.append("terminal", "maintainer", "merge_ready", repo=full.split("/")[1],
+                     ref=f"pr-{pr['number']}", ok=ok, detail=detail,
+                     summary=f"good-to-merge rule: squash-merge pr #{pr['number']} — {reason}",
+                     data={"action": "merge", "method": "squash",
+                           "head": pr["headRefOid"], "rule": "good-to-merge",
+                           "trigger": "tick" if args.tick else "manual"})
     if args.merge:
-        print(f"{merged} merged")
+        print(f"{len(result['merged'])} merged, {len(result['queued'])} queued, "
+              f"{len(result['failed'])} failed, {len(result['waiting'])} waiting for a later run")
+    if args.tick:
+        snapshot = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "mode": server.steward_mode(), "limit": limit, "acting": args.merge,
+                    **result}
+        server.atomic_write_text(ROOT / "merge_queue.json", json.dumps(snapshot, indent=2) + "\n")
+        # One machine-readable line for tick.sh's log and audit summary.
+        print("SUMMARY " + json.dumps({k: (len(v) if isinstance(v, list) else v)
+                                       for k, v in snapshot.items() if k != "ts"}))
 
 
 if __name__ == "__main__":
