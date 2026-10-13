@@ -36,6 +36,9 @@ GOOD_TO_MERGE = re.compile(r"good to merge", re.I)
 CRITICAL_TITLE = re.compile(r"^\s*(feat\b|\w+(\([^)]*\))?!:)", re.I)
 VERSION_BUMP = re.compile(r"\bfrom v?(\d+)\.\S*\s+to v?(\d+)\.", re.I)
 GREEN = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+# Strict branch protection refuses a merge from a branch behind its base with
+# this wording, even when the named check passed on the head.
+BEHIND_REFUSAL = re.compile(r"Required status check .* is expected|not up to date", re.I)
 # Heads this script created with update-branch, keyed "owner/repo#N" to the
 # approved head they were built on: base catch-up, not new contributor code.
 UPDATES = ROOT / ".merge_ready_updates.json"
@@ -107,6 +110,21 @@ def eligible(pr, steward, full, updates):
     return True, f"steward approved at {pr['headRefOid'][:8]}, checks green, not a feature change"
 
 
+def refresh_state(pr, full):
+    """Re-read mergeStateStatus just before acting. The list read at the start
+    of the run goes stale once an earlier merge moves the base: under strict
+    protection the rest of that repo's queue turns BEHIND, and GitHub reports
+    UNKNOWN for a moment while it recomputes."""
+    for _ in range(5):
+        ok, out = gh(["pr", "view", str(pr["number"]), "-R", full,
+                      "--json", "mergeStateStatus", "--jq", ".mergeStateStatus"])
+        if ok and out != "UNKNOWN":
+            pr["mergeStateStatus"] = out
+            break
+        time.sleep(2)
+    return pr["mergeStateStatus"]
+
+
 def squash(pr, full, updates, auto_merge):
     """Squash-merge now, or for a branch behind a strict-protection base, bring
     it up to date: GitHub squashes it once the refreshed checks pass where the
@@ -116,7 +134,9 @@ def squash(pr, full, updates, auto_merge):
     if pr["mergeStateStatus"] != "BEHIND":
         # --match-head-commit: GitHub refuses if someone pushed after the check.
         ok, out = gh(["pr", "merge", num, "-R", full, "--squash", "--match-head-commit", head])
-        return ok, ok, out or "merged"
+        if ok or not BEHIND_REFUSAL.search(out):
+            return ok, ok, out or "merged"
+        # The base moved after refresh_state looked: treat it as BEHIND.
     ok, out = gh(["pr", "update-branch", num, "-R", full])
     if not ok:
         return False, False, f"behind base; update-branch failed: {out}"
@@ -138,7 +158,7 @@ def squash(pr, full, updates, auto_merge):
                        else f"branch updated; auto-merge failed: {out}")
 
 
-def merges_per_tick(default=10):
+def merges_per_tick(default=30):
     """limits.merges_per_tick from config.yaml; 0 turns the tick's merge
     queue off."""
     m = re.search(r"^\s*merges_per_tick:\s*(\d+)", (ROOT / "config.yaml").read_text(), re.M)
@@ -234,6 +254,14 @@ def main():
             word = "would" if not args.merge else "wait "
             print(f"{word} {ref}  {pr['title'][:60]}{behind}")
             result["waiting"].append(entry(full, pr, reason + behind, approved))
+            continue
+        state = refresh_state(pr, full)
+        if state not in ("CLEAN", "BEHIND"):
+            # Typically a conflict an earlier merge this run introduced: report
+            # it without spending a merge slot on an attempt GitHub will refuse.
+            detail = f"merge state became {state} before this run reached it"
+            print(f"FAILED {ref}  {pr['title'][:60]}  {detail}")
+            result["failed"].append(entry(full, pr, detail, approved))
             continue
         if full not in auto_merge:
             ok, out = gh(["api", f"repos/{full}", "--jq", ".allow_auto_merge"])

@@ -39,6 +39,9 @@ class MergeQueueTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.prs = {}
         self.merged = []
+        self.auto = []
+        self.strict = False
+        self.refuse = {}
         for target, value in [(merge_ready, "ROOT"), (server, "ROOT")]:
             patcher = mock.patch.object(target, value, self.root)
             patcher.start()
@@ -66,11 +69,31 @@ class MergeQueueTests(unittest.TestCase):
             return True, json.dumps([{"number": n, "reviews": p["reviews"]}
                                      for n, p in self.prs.items()])
         if args[:2] == ["pr", "view"]:
-            return True, json.dumps(self.prs[int(args[2])])
+            p = self.prs[int(args[2])]
+            if "--jq" in args:
+                return True, p[args[args.index("--jq") + 1].lstrip(".")]
+            return True, json.dumps(p)
         if args[0] == "api" and args[1].startswith("repos/"):
             return True, "true"
+        if args[:2] == ["pr", "update-branch"]:
+            p = self.prs[int(args[2])]
+            p["headRefOid"] += "-updated"
+            p["mergeStateStatus"] = "BLOCKED"  # checks rerun on the new head
+            return True, ""
+        if args[:2] == ["pr", "merge"] and "--auto" in args:
+            self.auto.append(int(args[2]))
+            return True, ""
         if args[:2] == ["pr", "merge"]:
-            self.merged.append(int(args[2]))
+            n = int(args[2])
+            if n in self.refuse:
+                return False, self.refuse[n]
+            if self.strict and self.prs[n]["mergeStateStatus"] == "BEHIND":
+                return False, 'GraphQL: Required status check "DCO" is expected. (mergePullRequest)'
+            self.merged.append(n)
+            if self.strict:  # the base moved: every other open PR is now behind it
+                for other, p in self.prs.items():
+                    if other not in self.merged and p["mergeStateStatus"] == "CLEAN":
+                        p["mergeStateStatus"] = "BEHIND"
             return True, ""
         raise AssertionError(f"unexpected gh call {args}")
 
@@ -113,9 +136,55 @@ class MergeQueueTests(unittest.TestCase):
 
     def test_default_limit_when_config_omits_it(self):
         self.config()
-        self.prs = {n: pr(n, f"2026-09-{n:02d}T00:00:00Z") for n in range(1, 13)}
+        self.prs = {n: pr(n, f"2026-09-01T00:{n:02d}:00Z") for n in range(1, 33)}
         self.run_main("--tick")
-        self.assertEqual(self.merged, list(range(1, 11)))
+        self.assertEqual(self.merged, list(range(1, 31)))
+
+    def test_strict_base_updates_the_rest_of_the_repo_after_a_merge(self):
+        # k8sgpt, 2026-10-13: the first merge left the others behind main, and
+        # merging them from the stale CLEAN state failed as "DCO is expected".
+        self.config(merges=5)
+        self.strict = True
+        self.prs = {n: pr(n, f"2026-09-0{n}T00:00:00Z") for n in (1, 2, 3)}
+        self.run_main("--tick")
+        self.assertEqual(self.merged, [1])
+        self.assertEqual(self.auto, [2, 3])
+        snap = self.snapshot()
+        self.assertEqual([e["number"] for e in snap["queued"]], [2, 3])
+        self.assertEqual(snap["failed"], [])
+
+    def test_stale_clean_refused_as_missing_check_falls_back_to_update(self):
+        self.config(merges=5)
+        self.prs = {1: pr(1, "2026-09-01T00:00:00Z")}
+        self.refuse = {1: 'GraphQL: Required status check "DCO" is expected. (mergePullRequest)'}
+        self.run_main("--tick")
+        self.assertEqual(self.auto, [1])
+        self.assertTrue(self.prs[1]["headRefOid"].endswith("-updated"))
+        self.assertEqual([e["number"] for e in self.snapshot()["queued"]], [1])
+
+    def test_other_merge_failures_are_not_retried_as_behind(self):
+        self.config(merges=5)
+        self.prs = {1: pr(1, "2026-09-01T00:00:00Z")}
+        self.refuse = {1: "GraphQL: Pull Request has merge conflicts (mergePullRequest)"}
+        self.run_main("--tick")
+        self.assertEqual(self.auto, [])
+        self.assertIn("merge conflicts", self.snapshot()["failed"][0]["detail"])
+
+    def test_conflict_found_on_refresh_does_not_spend_a_slot(self):
+        self.config(merges=1)
+        self.prs = {1: pr(1, "2026-09-01T00:00:00Z"), 2: pr(2, "2026-09-02T00:00:00Z")}
+        real = self.fake_gh
+
+        def conflicted(args):
+            if args[:3] == ["pr", "view", "1"] and "--jq" in args:
+                return True, "DIRTY"
+            return real(args)
+        with mock.patch.object(merge_ready, "gh", side_effect=conflicted):
+            self.run_main("--tick")
+        self.assertEqual(self.merged, [2])
+        failed = self.snapshot()["failed"]
+        self.assertEqual([e["number"] for e in failed], [1])
+        self.assertIn("became DIRTY", failed[0]["detail"])
 
     def test_ineligible_prs_are_skipped_not_counted(self):
         self.config(merges=1)

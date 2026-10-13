@@ -286,7 +286,7 @@ is not a critical feature change. A title starting `feat` or marked breaking
 Every tick works this rule as a **merge queue**. After the agent finishes,
 `tick.sh` runs `merge_ready.py --tick`, which lines up every eligible PR
 oldest sign-off first and acts on at most `limits.merges_per_tick` of them
-(default 10; `0` turns the phase off). The rest wait for the next tick. In
+(default 30; `0` turns the phase off). The rest wait for the next tick. In
 draft mode the queue is reported but nothing merges. The last run's queue
 (merged, queued, failed, waiting and skipped, each with its reason) is kept in
 `merge_queue.json`, and a `merge_queue` summary event is written to the audit
