@@ -37,6 +37,12 @@ limits:
   # 0 = no floor (the steward will reach for years-old items indefinitely).
   activity_floor_days: 90
 
+  # Merge queue: after the agent finishes, each live tick squash-merges up to
+  # this many PRs that pass the good-to-merge rule (see the README), oldest
+  # steward sign-off first; the rest wait for the next tick. Draft mode only
+  # reports the queue. 0 turns the tick's merge phase off.
+  merges_per_tick: 30
+
   # Legacy tick auto-merge window, superseded by merge_ready.py's good-to-merge
   # rule (see the README). Ticks are no longer instructed to merge; keep 0.
   auto_merge_after_days: 0

@@ -56,6 +56,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -1867,5 +1868,21 @@ class Handler(SimpleHTTPRequestHandler):
         pass  # keep journal quiet; approvals are logged to approvals.jsonl
 
 
+def ensure_config(root=None):
+    """Create config.yaml from the example when it is missing, as install.sh
+    does. Every page and setting reads it, so without it the dashboard
+    serves empty responses (a server started from a fresh clone before
+    install.sh, or after the file was removed). Returns True if created."""
+    root = root or ROOT
+    path = root / "config.yaml"
+    if path.exists():
+        return False
+    shutil.copyfile(root / "config.example.yaml", path)
+    print(">> created config.yaml from example: edit it before the first tick",
+          file=sys.stderr)
+    return True
+
+
 if __name__ == "__main__":
+    ensure_config()
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

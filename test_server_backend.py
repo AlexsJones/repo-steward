@@ -99,5 +99,33 @@ class BackendConfigTests(unittest.TestCase):
         self.assertIn("STEWARD_ENGINE_CMD", text)
 
 
+class MissingConfigTests(unittest.TestCase):
+    """A server started before config.yaml exists must not serve empty pages."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        (self.root / "config.example.yaml").write_text(
+            "mode: draft\nrepos:\n  - name: owner/repo\n", encoding="utf-8")
+        (self.root / "dashboard-first-run.html").write_text(
+            (Path(server.__file__).parent / "dashboard-first-run.html").read_text())
+        patcher = mock.patch.object(server, "ROOT", self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_missing_config_is_created_from_the_example(self):
+        self.assertTrue(server.ensure_config())
+        self.assertEqual((self.root / "config.yaml").read_text(),
+                         (self.root / "config.example.yaml").read_text())
+        self.assertEqual([r["name"] for r in server.repos_config()], ["owner/repo"])
+        self.assertIn("owner/repo", server.first_run_page())
+
+    def test_existing_config_is_left_alone(self):
+        (self.root / "config.yaml").write_text("mode: live\n", encoding="utf-8")
+        self.assertFalse(server.ensure_config())
+        self.assertEqual((self.root / "config.yaml").read_text(), "mode: live\n")
+
+
 if __name__ == "__main__":
     unittest.main()

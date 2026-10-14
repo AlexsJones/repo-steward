@@ -283,13 +283,25 @@ decision is APPROVED, every check is green, the branch merges cleanly, and it
 is not a critical feature change. A title starting `feat` or marked breaking
 (`!`), or a major-version dependency bump, stays with you.
 
+Every tick works this rule as a **merge queue**. After the agent finishes,
+`tick.sh` runs `merge_ready.py --tick`, which lines up every eligible PR
+oldest sign-off first and acts on at most `limits.merges_per_tick` of them
+(default 30; `0` turns the phase off). The rest wait for the next tick. In
+draft mode the queue is reported but nothing merges. The last run's queue
+(merged, queued, failed, waiting and skipped, each with its reason) is kept in
+`merge_queue.json`, and a `merge_queue` summary event is written to the audit
+log. The merge phase needs no model, so it still runs when the engine fails.
+
+You can also work the queue by hand:
+
 ```bash
-make merge-ready          # dry run: what would merge, and why the rest won't
-make merge-ready MERGE=1  # squash-merge the eligible PRs
+make merge-ready                  # dry run: what would merge, and why the rest won't
+make merge-ready MERGE=1          # squash-merge every eligible PR
+make merge-ready MERGE=1 LIMIT=5  # just the five longest-waiting
 ```
 
-It uses `gh` only, with no model and no token cost, and refuses to run during a
-tick or decision run. A branch behind a strict-protection base is updated
+It uses `gh` only, with no model and no token cost. Run by hand, it refuses to
+run during a tick or decision run. A branch behind a strict-protection base is updated
 first. Where the repository allows it, GitHub auto-merge then finishes once
 checks pass; otherwise the next run merges it (it remembers the update commit
 in `.merge_ready_updates.json`, so the approval still counts). Every merge is
@@ -497,7 +509,7 @@ running install generates is gitignored (per-maintainer state). The tracked set:
 | `signals.py` | deterministic, deduplicating evidence collector for repository insights | yes |
 | `insights.py` · `INSIGHTS.md` · `insights.sh` | GitHub fetch, ranking playbook, and validated publish for the build-candidate sweep | yes |
 | `builds.py` · `BUILD.md` · `build.sh` | the Build button's queue, playbook, and runner (implements a theme, opens a PR) | yes |
-| `merge_ready.py` | squash-merges PRs the steward signed off "Good to merge" that are not feature changes (`--merge`; dry run by default) | yes |
+| `merge_ready.py` | squash-merges PRs the steward signed off "Good to merge" that are not feature changes, oldest sign-off first (`--merge`, `--limit N`; dry run by default; `--tick` is the tick's merge queue) | yes |
 | `proactive.py` | retired idea-canvas queue; ticks still honour items already in `proactive.json` | yes |
 | `evaluation.py` · `EVALUATION.md` · `evaluate.sh` | critically compare prior judgments with later outcomes and derive lessons | yes |
 | `insights.html` · `evaluation.html` · `metrics.html` · `audit.html` | build candidates, self-evaluation, metrics, and decision-log pages | yes |
