@@ -10,7 +10,8 @@
 #   never written; 77 = queue or conversation action budget was underused;
 #   79 = insight signal collection failed; 80 = a new PR judgment lacks a
 #   canonical review record; 81 = an eligible Insights work item received no
-#   reserved incremental step;
+#   reserved incremental step; 124/137 = engine hit STEWARD_ENGINE_TIMEOUT
+#   (default 75m);
 #   anything else is the engine's own exit status.
 set -uo pipefail
 STEWARD_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,6 +25,15 @@ BIN="${STEWARD_ENGINE_BIN:-${CLAUDE_BIN:-claude}}"
 MODEL="${STEWARD_MODEL:-}"
 export STEWARD_RUNNING_TICK=1
 export STEWARD_TICK_LAUNCHER_PID="$$"
+# Hard wall-clock limit for the engine, kept below the unit's TimeoutStartSec
+# (90m) so a hung or idle run is stopped here and the guards, merge queue and
+# dashboard render below still run, instead of systemd killing the script.
+ENGINE_TIMEOUT="${STEWARD_ENGINE_TIMEOUT:-75m}"
+ENGINE_RUN=(timeout --kill-after=60 "$ENGINE_TIMEOUT")
+# claude -p stops background subagents 10 minutes after the coordinator's last
+# turn, even when the coordinator is still waiting for them. Let them finish;
+# ENGINE_TIMEOUT is the backstop.
+export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
 export PROMPT="You are the sole worker inside an already-started Repo Steward tick. The running repo-steward.service, tick.sh, and parent PID $STEWARD_TICK_LAUNCHER_PID are YOUR OWN launcher, never a competing tick: do not inspect, monitor, wait for, restart, or invoke them. Begin the tick work directly. Read $STEWARD_HOME/STEWARD.md and execute its sequence exactly. Sync is not completion: do real queue work through the configured substantive/light target when work remains; tick.sh records a shortfall when useful progress stops below that target and rejects a run that does no qualifying work. When actionable issues/discussions exist it also requires the configured conversation-action minimum before PR work can consume the budget. After that floor, reserve the configured proactive slot for incremental progress on existing selected or nominated Insights work before general backlog drain; synchronizing proactive.json is not progress. Preserve every existing ledger item's workflow fields when refreshing GitHub facts, then spend the configured work budget. Before concluding, run the queue check against the complete state directory exactly as documented; checking one repository ledger is never proof that the fleet-wide budget passed."
 
 # Keep a private pre-sync copy. The agent may refresh GitHub facts, but a
@@ -68,7 +78,7 @@ fi
 
 case "$ENGINE" in
   claude)
-    OUT="$("$BIN" -p ${MODEL:+--model "$MODEL"} --output-format json "$PROMPT")"
+    OUT="$("${ENGINE_RUN[@]}" "$BIN" -p ${MODEL:+--model "$MODEL"} --output-format json "$PROMPT")"
     RC=$?
     if jq -e . >/dev/null 2>&1 <<<"$OUT"; then
       { echo "=== tick $TS engine=claude (rc=$RC) ==="; jq -r '.result // "(no result text)"' <<<"$OUT"; } >> logs/tick.log
@@ -92,17 +102,17 @@ case "$ENGINE" in
     # Codex's workspace-write sandbox permits the former but blocks network
     # access, so run this unattended, externally scoped service in its
     # full-access sandbox.
-    OUT="$("$BIN" exec --sandbox danger-full-access ${MODEL:+--model "$MODEL"} "$PROMPT" 2>&1)"; RC=$?
+    OUT="$("${ENGINE_RUN[@]}" "$BIN" exec --sandbox danger-full-access ${MODEL:+--model "$MODEL"} "$PROMPT" 2>&1)"; RC=$?
     { echo "=== tick $TS engine=codex (rc=$RC) ==="; echo "$OUT"; } >> logs/tick.log
     echo "{\"ts\":\"$TS\",\"rc\":$RC,\"engine\":\"codex\",\"note\":\"usage not reported by this engine\"}" >> usage.jsonl
     ;;
   gemini)
-    OUT="$("$BIN" ${MODEL:+-m "$MODEL"} -p "$PROMPT" 2>&1)"; RC=$?
+    OUT="$("${ENGINE_RUN[@]}" "$BIN" ${MODEL:+-m "$MODEL"} -p "$PROMPT" 2>&1)"; RC=$?
     { echo "=== tick $TS engine=gemini (rc=$RC) ==="; echo "$OUT"; } >> logs/tick.log
     echo "{\"ts\":\"$TS\",\"rc\":$RC,\"engine\":\"gemini\",\"note\":\"usage not reported by this engine\"}" >> usage.jsonl
     ;;
   opencode)
-    OUT="$("$BIN" run ${MODEL:+--model "$MODEL"} --format json "$PROMPT" 2>&1)"; RC=$?
+    OUT="$("${ENGINE_RUN[@]}" "$BIN" run ${MODEL:+--model "$MODEL"} --format json "$PROMPT" 2>&1)"; RC=$?
     # Log the readable text output to tick.log
     { echo "=== tick $TS engine=opencode (rc=$RC) ==="; echo "$OUT" | jq -r 'select(.type=="text") | .part.text // empty' 2>/dev/null; } >> logs/tick.log
     # Aggregate tokens and cost from all step_finish events
@@ -131,7 +141,7 @@ case "$ENGINE" in
     ;;
   custom)
     [[ -n "${STEWARD_ENGINE_CMD:-}" ]] || { echo "engine=custom requires STEWARD_ENGINE_CMD" >> logs/tick.log; exit 1; }
-    OUT="$(bash -c "$STEWARD_ENGINE_CMD" 2>&1)"; RC=$?
+    OUT="$("${ENGINE_RUN[@]}" bash -c "$STEWARD_ENGINE_CMD" 2>&1)"; RC=$?
     { echo "=== tick $TS engine=custom (rc=$RC) ==="; echo "$OUT"; } >> logs/tick.log
     echo "{\"ts\":\"$TS\",\"rc\":$RC,\"engine\":\"custom\"}" >> usage.jsonl
     ;;
@@ -139,6 +149,17 @@ case "$ENGINE" in
     echo "unknown STEWARD_ENGINE '$ENGINE'" >> logs/tick.log; exit 1
     ;;
 esac
+
+# timeout(1) exits 124 on SIGTERM, 137 when --kill-after had to SIGKILL.
+if (( RC == 124 || RC == 137 )); then
+  echo "=== tick $TS engine stopped at the $ENGINE_TIMEOUT limit (rc=$RC) ===" >> logs/tick.log
+  printf '{"ts":"%s","phase":"incomplete","msg":"engine stopped at the %s limit"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ENGINE_TIMEOUT" >> progress.jsonl
+  jq -cn --arg ts "$TS" --arg limit "$ENGINE_TIMEOUT" --argjson rc "$RC" \
+    '{v:1,ts:$ts,actor:"system",via:"tick",event:"engine_timeout",ok:false,
+      summary:("engine stopped at the " + $limit + " tick limit; post-run checks still ran"),
+      data:{limit:$limit,rc:$rc}}' >> audit.jsonl
+fi
 
 # Repair the recognizable destructive-sync shape (an existing acted-on item
 # rebuilt as a blank backlog record), while retaining newly fetched GitHub
