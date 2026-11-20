@@ -42,6 +42,8 @@ class MergeQueueTests(unittest.TestCase):
         self.auto = []
         self.strict = False
         self.refuse = {}
+        self.files = {}
+        self.report_merged = True
         for target, value in [(merge_ready, "ROOT"), (server, "ROOT")]:
             patcher = mock.patch.object(target, value, self.root)
             patcher.start()
@@ -73,8 +75,13 @@ class MergeQueueTests(unittest.TestCase):
             if "--jq" in args:
                 return True, p[args[args.index("--jq") + 1].lstrip(".")]
             return True, json.dumps(p)
+        if args[0] == "api" and "/actions/runs" in args[1]:
+            return True, json.dumps([{"sha": sha, "name": "CI"} for sha in getattr(self, "held", [])])
         if args[0] == "api" and args[1].startswith("repos/"):
             return True, "true"
+        if args[:2] == ["pr", "diff"]:
+            n = int(args[2])
+            return True, "\n".join(self.files.get(n, [f"file{n}.txt"]))
         if args[:2] == ["pr", "update-branch"]:
             p = self.prs[int(args[2])]
             p["headRefOid"] += "-updated"
@@ -90,6 +97,11 @@ class MergeQueueTests(unittest.TestCase):
             if self.strict and self.prs[n]["mergeStateStatus"] == "BEHIND":
                 return False, 'GraphQL: Required status check "DCO" is expected. (mergePullRequest)'
             self.merged.append(n)
+            merged_pr = self.prs[n]
+            if self.report_merged:
+                merged_pr["state"] = "MERGED"
+                merged_pr["mergedAt"] = "2026-10-28T00:00:00Z"
+                merged_pr["mergeCommit"] = {"oid": f"merge{n:04d}abcdef"}
             if self.strict:  # the base moved: every other open PR is now behind it
                 for other, p in self.prs.items():
                     if other not in self.merged and p["mergeStateStatus"] == "CLEAN":
@@ -188,16 +200,126 @@ class MergeQueueTests(unittest.TestCase):
 
     def test_ineligible_prs_are_skipped_not_counted(self):
         self.config(merges=1)
-        self.prs = {1: pr(1, "2026-09-01T00:00:00Z", title="feat: big thing"),
+        self.prs = {1: pr(1, "2026-09-01T00:00:00Z", title="feat!: big thing"),
                     2: pr(2, "2026-09-02T00:00:00Z")}
         self.run_main("--tick")
         self.assertEqual(self.merged, [2])
         self.assertEqual([e["number"] for e in self.snapshot()["skipped"]], [1])
 
+    def test_signed_off_feature_merges_but_major_bump_does_not(self):
+        self.config(merges=5)
+        self.prs = {1: pr(1, "2026-09-01T00:00:00Z", title="feat(i18n): German"),
+                    2: pr(2, "2026-09-02T00:00:00Z", title="chore(deps): bump dirs from 6.0.0 to 7.0.0")}
+        self.run_main("--tick")
+        self.assertEqual(self.merged, [1])
+        self.assertIn("major version bump", self.snapshot()["skipped"][0]["detail"])
+
+    def test_held_ci_run_is_reported_as_blocked_not_skipped(self):
+        self.config(merges=5)
+        self.prs = {1: pr(1, "2026-09-01T00:00:00Z", mergeStateStatus="UNSTABLE"),
+                    2: pr(2, "2026-09-02T00:00:00Z", mergeStateStatus="UNSTABLE")}
+        self.held = [self.prs[1]["headRefOid"]]
+        self.run_main("--tick")
+        snap = self.snapshot()
+        self.assertEqual(self.merged, [])
+        self.assertEqual([e["number"] for e in snap["blocked"]], [1])
+        self.assertIn("awaiting your approval: CI", snap["blocked"][0]["detail"])
+        self.assertEqual([e["number"] for e in snap["skipped"]], [2])
+
+    def test_approval_without_sign_off_is_queued_for_rereview_once_green(self):
+        self.config(merges=5)
+        plain = {"author": {"login": STEWARD}, "state": "APPROVED",
+                 "body": "Approving; CI has not run on this head yet.",
+                 "submittedAt": "2026-09-01T00:00:00Z"}
+        green = pr(1, "2026-09-01T00:00:00Z")
+        green["reviews"] = [dict(plain, commit={"oid": green["headRefOid"]})]
+        held = pr(2, "2026-09-02T00:00:00Z", statusCheckRollup=[])
+        held["reviews"] = [dict(plain, commit={"oid": held["headRefOid"]})]
+        stale = pr(3, "2026-09-03T00:00:00Z")
+        stale["reviews"] = [dict(plain, commit={"oid": "olderhead"})]
+        self.prs = {1: green, 2: held, 3: stale}
+        self.held = [held["headRefOid"]]
+        self.run_main("--tick")
+        snap = self.snapshot()
+        self.assertEqual(self.merged, [])
+        self.assertEqual([e["number"] for e in snap["rereview"]], [1])
+        self.assertEqual([e["number"] for e in snap["blocked"]], [2])
+        self.assertEqual(snap["skipped"], [])
+
     def test_tick_flag_refused_outside_a_tick(self):
         self.config()
         with mock.patch.dict(os.environ, {}, clear=True), self.assertRaises(SystemExit):
             self.run_main("--tick")
+
+    def test_branch_update_is_not_recorded_as_a_merge(self):
+        self.config(merges=5)
+        self.strict = True
+        self.prs = {1: pr(1, "2026-09-01T00:00:00Z"), 2: pr(2, "2026-09-02T00:00:00Z")}
+        approved = self.prs[2]["headRefOid"]
+        self.run_main("--tick")
+        events = [json.loads(line) for line in (self.root / "audit.jsonl").read_text().splitlines()]
+        by_ref = {event["ref"]: event for event in events}
+        self.assertEqual(by_ref["pr-1"]["event"], "terminal")
+        self.assertEqual(by_ref["pr-1"]["data"]["action"], "merge")
+        self.assertEqual(by_ref["pr-1"]["data"]["approved_head"], self.prs[1]["headRefOid"])
+        updated = by_ref["pr-2"]
+        self.assertEqual(updated["event"], "merge_attempt")
+        self.assertEqual(updated["data"]["action"], "auto-merge")
+        self.assertTrue(updated["ok"])
+        self.assertEqual(updated["data"]["approved_head"], approved)
+        self.assertTrue(updated["data"]["head"].endswith("-updated"))
+        merges = [json.loads(line) for line in (self.root / "merges.jsonl").read_text().splitlines()]
+        self.assertEqual([row["number"] for row in merges], [1])
+        self.assertEqual(merges[0]["merge_commit"], "merge0001abcdef")
+        self.assertEqual(merges[0]["files"], ["file1.txt"])
+
+    def test_unconfirmed_merge_is_a_failure(self):
+        self.config(merges=5)
+        self.report_merged = False
+        self.prs = {1: pr(1, "2026-09-01T00:00:00Z")}
+        self.run_main("--tick")
+        self.assertEqual(self.merged, [1])
+        snap = self.snapshot()
+        self.assertEqual(snap["merged"], [])
+        self.assertIn("state is not MERGED", snap["failed"][0]["detail"])
+        events = [json.loads(line) for line in (self.root / "audit.jsonl").read_text().splitlines()]
+        self.assertEqual(events[0]["event"], "merge_attempt")
+        self.assertFalse(events[0]["ok"])
+        self.assertFalse((self.root / "merges.jsonl").exists())
+
+    def test_overlapping_prs_wait_for_the_next_tick(self):
+        self.config(merges=5)
+        self.prs = {1: pr(1, "2026-09-03T00:00:00Z"), 2: pr(2, "2026-09-01T00:00:00Z"),
+                    3: pr(3, "2026-09-02T00:00:00Z")}
+        self.files = {2: ["shared.go", "b.go"], 3: ["shared.go"], 1: ["a.go"]}
+        self.run_main("--tick")
+        self.assertEqual(self.merged, [2, 1])
+        waiting = self.snapshot()["waiting"]
+        self.assertEqual([row["number"] for row in waiting], [3])
+        self.assertIn("overlaps #2", waiting[0]["detail"])
+
+    def test_second_consecutive_failure_is_stuck(self):
+        self.config(merges=5)
+        prior = {"ts": "2026-10-01T00:00:00Z", "repo": REPO, "action": "good-to-merge",
+                 "item": "pr-1", "ok": False, "merged": False, "detail": "merge: conflicts"}
+        (self.root / "approvals.jsonl").write_text(json.dumps(prior) + "\n", encoding="utf-8")
+        self.prs = {1: pr(1, "2026-09-01T00:00:00Z"), 2: pr(2, "2026-09-02T00:00:00Z")}
+        self.refuse = {1: "GraphQL: Pull Request has merge conflicts (mergePullRequest)"}
+        self.run_main("--tick")
+        stuck = self.snapshot()["stuck"]
+        self.assertEqual([row["number"] for row in stuck], [1])
+        self.assertIn("previous: merge: conflicts", stuck[0]["detail"])
+        self.assertEqual(self.merged, [2])
+
+    def test_failure_after_a_success_is_not_stuck(self):
+        self.config(merges=5)
+        prior = {"ts": "2026-10-01T00:00:00Z", "repo": REPO, "action": "good-to-merge",
+                 "item": "pr-1", "ok": True, "merged": True, "detail": "merge: merged"}
+        (self.root / "approvals.jsonl").write_text(json.dumps(prior) + "\n", encoding="utf-8")
+        self.prs = {1: pr(1, "2026-09-01T00:00:00Z")}
+        self.refuse = {1: "GraphQL: Pull Request has merge conflicts (mergePullRequest)"}
+        self.run_main("--tick")
+        self.assertEqual(self.snapshot()["stuck"], [])
 
     def test_manual_merge_still_refuses_during_a_tick(self):
         self.config()
@@ -240,6 +362,22 @@ class MergeQueuePanelTests(unittest.TestCase):
         self.assertIn('st ok">merged', page)
         self.assertIn("<b>1/10</b>", page)
         self.assertIn('Failed</span><b>0</b>', page)
+
+    def test_panel_shows_blocked_and_rereview_buckets(self):
+        self.snapshot("2026-10-02T06:30:00Z")
+        snap = json.loads((self.root / "merge_queue.json").read_text())
+        snap["blocked"] = [{"repo": REPO, "number": 8, "title": "fix: held", "url": "https://x/8",
+                            "detail": "CI run awaiting your approval: CI", "approved_at": ""}]
+        snap["rereview"] = [{"repo": REPO, "number": 9, "title": "fix: green", "url": "https://x/9",
+                             "detail": "approved without sign-off; checks are green now", "approved_at": ""}]
+        snap["stuck"] = [{"repo": REPO, "number": 4, "title": "fix: stuck", "url": "https://x/4",
+                          "detail": "second consecutive failure", "approved_at": ""}]
+        (self.root / "merge_queue.json").write_text(json.dumps(snap), encoding="utf-8")
+        page = render_dashboard.render(self.root)
+        self.assertIn("needs your CI approval", page)
+        self.assertIn("re-review owed", page)
+        self.assertIn(">escalate<", page)
+        self.assertIn('Needs you</span><b>1</b>', page)
 
     def test_stale_snapshot_is_not_shown_as_this_tick(self):
         self.snapshot("2026-10-01T06:30:00Z")

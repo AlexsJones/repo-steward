@@ -204,6 +204,18 @@ button.cell:hover { background: #ffffff12; }
 .panel.attn { border-color: var(--signal); }
 .panel.attn > .panel-head { background: var(--signal-soft); border-bottom-color: var(--signal); }
 .panel-body { padding: 12px; }
+
+/* daily briefing: the few things that need the maintainer, above everything else */
+.brief-row { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.brief-row > .st { flex: 0 0 96px; text-align: center; margin-top: 1px; }
+.brief-what { flex: 1; min-width: 0; font-size: 13px; }
+.brief-what .sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.brief-what .sub b { color: var(--ink); }
+.brief-what ul { margin: 0; padding: 0; list-style: none; }
+.brief-what li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brief-did { padding: 9px 12px; color: var(--ink-2); font: 12px var(--mono); }
+.brief-did .label { color: var(--muted); margin-right: 10px; }
+@media (max-width: 640px) { .brief-row { flex-wrap: wrap; } .brief-row > .st { flex: 0 0 auto; } }
 .empty { padding: 18px 12px; color: var(--muted); font: 12px var(--mono); }
 .empty::before { content: "— "; }
 

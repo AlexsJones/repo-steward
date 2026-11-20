@@ -159,8 +159,11 @@ def load_builds(root: Path) -> list[dict]:
 
 
 MERGE_STATUS = {"merged": ("ok", "merged"), "queued": ("info", "auto-merge queued"),
-                "failed": ("crit", "failed"), "waiting": ("", "waiting"),
-                "skipped": ("warn", "skipped")}
+                "failed": ("crit", "failed"), "stuck": ("crit", "escalate"),
+                "waiting": ("", "waiting"),
+                "skipped": ("warn", "skipped"),
+                "blocked": ("crit", "needs your CI approval"),
+                "rereview": ("info", "re-review owed")}
 
 
 def merge_queue(root: Path, tick_ts: str) -> dict | None:
@@ -188,6 +191,169 @@ def merge_history(root: Path, ticks=10) -> list[dict]:
             if e.get("event") == "merge_queue" and isinstance(e.get("data"), dict):
                 out.append({"ts": e.get("ts", ""), **e["data"]})
     return out[-ticks:]
+
+
+RC_REASON = {
+    75: "It stopped on a GitHub API escalation.",
+    76: "It ended early, before every repository was synced.",
+    77: "It left actionable queue work undone.",
+    78: "The dashboard render failed.",
+    79: "Insight signal collection failed.",
+    80: "A new PR judgment was recorded without its review evidence.",
+    81: "Selected Insights work did not get its reserved step.",
+    124: "The engine hit the tick time limit.",
+    137: "The engine hit the tick time limit and had to be killed.",
+}
+AUTH_ERROR = re.compile(r"authenticat|oauth|not logged in|/login|api key", re.I)
+
+
+def engine_output(root: Path, ts: str) -> str:
+    """What the engine printed for the tick that started at `ts`, from tick.log."""
+    try:
+        log = (root / "logs" / "tick.log").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    match = re.search(r"^=== tick " + re.escape(ts) + r" engine=[^\n]*\n(.*?)(?=^=== tick |\Z)", log, re.M | re.S)
+    return re.sub(r"\s+", " ", match.group(1)).strip()[:300] if match else ""
+
+
+def tick_health(root: Path) -> dict | None:
+    """The latest tick's outcome, and how long ticks have been failing."""
+    path = root / "audit.jsonl"
+    ticks = []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if '"tick_done"' not in line:
+                continue
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if e.get("event") == "tick_done" and e.get("via") == "tick":
+                ticks.append(e)
+    if not ticks:
+        return None
+    last = ticks[-1]
+    streak = 0
+    for e in reversed(ticks):
+        if e.get("ok"):
+            break
+        streak += 1
+    health = {"ok": bool(last.get("ok")), "ts": last.get("ts", ""), "streak": streak,
+              "since": ticks[-streak].get("ts", "") if streak else "",
+              "last_ok": next((e.get("ts", "") for e in reversed(ticks) if e.get("ok")), "")}
+    if health["ok"]:
+        return health
+    rc = (last.get("data") or {}).get("rc")
+    said = engine_output(root, health["ts"])
+    if AUTH_ERROR.search(said):
+        health["reason"] = "The Claude login expired, so the engine never ran."
+        health["fix"] = "Run claude /login on this machine; the next tick picks it up."
+    elif rc in RC_REASON:
+        health["reason"] = RC_REASON[rc]
+    else:
+        health["reason"] = f"The engine exited with rc={rc}" + (f": {said}" if said else ".")
+    return health
+
+
+def site_outages(root: Path) -> list[dict]:
+    try:
+        sites = json.loads((root / "uptime_state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [{"url": url, "since": s.get("since", "")} for url, s in sites.items()
+            if isinstance(s, dict) and s.get("ok") is False]
+
+
+ACTION_WORDS = {"posted": "posted", "escalated": "escalated to you", "staged": "staged",
+                "fix_pr": "fix PR(s) opened", "labeled": "labelled"}
+
+
+def briefing(root: Path, *, health, decisions, merges, ready, staged, builds, actions, planned) -> str:
+    """The top-of-page briefing: what needs the maintainer, most urgent first,
+    then one line on what the steward did by itself."""
+    def links(entries, more_href):
+        shown = "".join(f'<li><a href="{esc(url)}" target="_blank" rel="noopener">{esc(label)}</a>'
+                        f'{" · " + esc(note) if note else ""}</li>' for label, url, note in entries[:3])
+        if len(entries) > 3:
+            shown += f'<li><a href="{esc(more_href)}">+{len(entries) - 3} more</a></li>'
+        return f"<ul>{shown}</ul>"
+
+    def pr(e):
+        return (f'{(e.get("repo") or "").split("/")[-1]}#{e.get("number")} {e.get("title") or ""}',
+                e.get("url") or "", "")
+
+    items = []  # (tone, chip, headline, detail html, anchor)
+    if health and not health["ok"]:
+        run = (f'{health["streak"]} ticks in a row have failed, since {day(health["since"])}'
+               if health["streak"] > 1 else "The latest tick failed")
+        detail = esc(health["reason"]) + (f' <b>{esc(health["fix"])}</b>' if health.get("fix") else "")
+        if health["last_ok"]:
+            detail += f' Last good tick: <span data-ts="{esc(health["last_ok"])}">{esc(day(health["last_ok"]))}</span>.'
+        items.append(("crit", "tick failed", run + "; everything below is from before that.", detail, "/audit.html"))
+    down = site_outages(root)
+    if down:
+        items.append(("crit", "site down", f'{len(down)} site{"s are" if len(down) > 1 else " is"} down',
+                      links([(d["url"], d["url"], f'since {day(d["since"])}') for d in down], "/metrics.html"),
+                      "/metrics.html"))
+    if decisions:
+        items.append(("sig", "decide", f'{len(decisions)} decision{"s" if len(decisions) > 1 else ""} waiting on you',
+                      links([(d["title"], d["url"] or "#decisions", "") for d in decisions], "#decisions"), "#decisions"))
+    blocked = (merges or {}).get("blocked") or []
+    if blocked:
+        items.append(("sig", "approve CI", f'{len(blocked)} approved PR{"s" if len(blocked) > 1 else ""} '
+                      "cannot merge until you approve the CI run",
+                      links([pr(e)[:2] + (e.get("detail") or "",) for e in blocked], "#merges"), "#merges"))
+    broken = ((merges or {}).get("stuck") or []) + ((merges or {}).get("failed") or [])
+    if broken:
+        items.append(("crit", "merge failed", f'{len(broken)} merge{"s" if len(broken) > 1 else ""} failed',
+                      links([pr(e)[:2] + (e.get("detail") or "",) for e in broken], "#merges"), "#merges"))
+    in_queue = {((e.get("repo") or "").split("/")[-1], str(e.get("number")))
+                for status in MERGE_STATUS for e in (merges or {}).get(status) or []}
+    look = [(repo, key, item) for repo, key, item in ready
+            if (repo["short"], key.split("-", 1)[-1]) not in in_queue]
+    if look:
+        items.append(("info", "final look", f'{len(look)} PR{"s" if len(look) > 1 else ""} approved by the steward, '
+                      "waiting for your merge",
+                      links([(f'{repo["short"]}#{key.split("-", 1)[-1]} {item.get("title") or ""}',
+                              item_url(repo, key, item), "") for repo, key, item in look], "#ready"), "#ready"))
+    if staged:
+        items.append(("info", "post", f'{len(staged)} staged repl{"ies" if len(staged) > 1 else "y"} waiting for you to post',
+                      links([(f'{repo["short"]} {key} {item.get("title") or ""}', item_url(repo, key, item), "")
+                             for repo, key, item, _ in staged], "#staged"), "#staged"))
+    bad_builds = [b for b in builds if b.get("status") in {"failed", "blocked"}]
+    if bad_builds:
+        items.append(("warn", "build", f'{len(bad_builds)} build{"s" if len(bad_builds) > 1 else ""} failed or blocked',
+                      links([(b.get("title") or "", f'/insights.html?theme={b.get("theme_id")}', b.get("status"))
+                             for b in bad_builds], "#builds"), "#builds"))
+
+    did = []
+    kinds = defaultdict(int)
+    for e in actions:
+        kinds[e.get("kind")] += 1
+    did += [f"{kinds[k]} {word}" for k, word in ACTION_WORDS.items() if kinds.get(k)]
+    if merges:
+        did += [f'{len(merges[k])} {word}' for k, word in (("merged", "merged"), ("queued", "on auto-merge"))
+                if merges.get(k)]
+        if merges.get("rereview"):
+            did.append(f'{len(merges["rereview"])} re-reviews owed next tick')
+    if planned:
+        did.append(f"{len(planned)} queued for the next tick")
+    summary = ('<div class="brief-did"><span class="label">Handled without you</span>'
+               + esc(" · ".join(did) if did else "nothing recorded in the latest tick") + "</div>")
+
+    rows = "".join(
+        f'<div class="brief-row"><span class="st {tone}">{esc(chip)}</span>'
+        f'<div class="brief-what"><b>{esc(headline)}</b><div class="sub">{detail}</div></div>'
+        f'<a class="btn ghost" href="{esc(anchor)}">Open</a></div>'
+        for tone, chip, headline, detail, anchor in items)
+    when = health["ts"] if health else ""
+    badge = f'<span class="count{" sig" if items else ""}">{len(items)}</span>'
+    return (f'<section class="panel brief{" attn" if items else ""}" id="briefing">'
+            f'<div class="panel-head"><h2>Daily briefing</h2>{badge}'
+            f'<span class="hint">after the tick of <span data-ts="{esc(when)}">{esc(day(when)) or "—"}</span>'
+            ' · what needs you, most urgent first</span></div>'
+            + (rows or '<div class="empty">Nothing needs you today.</div>') + summary + "</section>")
 
 
 def day(ts: str) -> str:
@@ -257,6 +423,9 @@ def render(root: Path = ROOT, output: Path | None = None) -> str:
                '<div class="tools"><input class="field" type="search" data-filter-input '
                'placeholder="filter rows  /" aria-label="Filter rows" style="width:220px"></div></div>')
 
+    out.append(briefing(root, health=tick_health(root), decisions=decisions, merges=merges, ready=ready,
+                        staged=staged, builds=builds, actions=actions, planned=planned))
+
     cells = [("Decisions", len(decisions), "decisions", bool(decisions)),
              ("Ready to merge", len(ready), "ready", False),
              ("Merged · tick", len(merges["merged"]) if merges else "—", "merges",
@@ -313,13 +482,16 @@ def render(root: Path = ROOT, output: Path | None = None) -> str:
         stats = [("Merged", len(merges["merged"]), "squash-merged now"),
                  ("Auto-merge", len(merges["queued"]), "branch updated, merges on green"),
                  ("Failed", len(merges["failed"]), "see detail"),
+                 ("Stuck", len(merges.get("stuck") or []), "failed twice, escalate once"),
                  ("Waiting", len(merges["waiting"]), "eligible, next tick"),
                  ("Skipped", len(merges["skipped"]), "rule says no"),
+                 ("Needs you", len(merges.get("blocked") or []), "approve the CI run"),
+                 ("Re-review", len(merges.get("rereview") or []), "approved, now green"),
                  ("Budget", f"{used}/{merges.get('limit')}", "merges_per_tick"
                   + ("" if merges.get("acting") else f" · {merges.get('mode')}: not acting")),
                  (f"Last {len(history)} ticks", recent, "merged in total")]
         strip = ('<div class="readout" style="margin:0;border-width:0 0 1px 0">' + "".join(
-            f'<div class="{"sig" if label == "Failed" and value else ""}"><span class="label">{esc(label)}</span>'
+            f'<div class="{"sig" if label in ("Failed", "Stuck", "Needs you") and value else ""}"><span class="label">{esc(label)}</span>'
             f'<b>{esc(str(value))}</b><small>{esc(sub)}</small></div>' for label, value, sub in stats) + "</div>")
         spark = ""
         if len(history) > 1:
@@ -335,7 +507,7 @@ def render(root: Path = ROOT, output: Path | None = None) -> str:
                      f'<span class="muted" style="font:11px var(--mono)">merged per tick</span>'
                      f'<div style="display:flex;align-items:flex-end;gap:3px">{bars}</div></div>')
         rows = []
-        for status in ("merged", "queued", "failed", "waiting", "skipped"):
+        for status in MERGE_STATUS:
             tone, label = MERGE_STATUS[status]
             for e in merges.get(status) or []:
                 short = (e.get("repo") or "").split("/")[-1]
@@ -352,6 +524,7 @@ def render(root: Path = ROOT, output: Path | None = None) -> str:
         body = empty("The latest tick had no merge phase.")
     total = sum(len(merges.get(k) or []) for k in MERGE_STATUS) if merges else 0
     out.append(panel("merges", "Merge queue · this tick", total, body,
+                     attn=bool(merges and (merges.get("blocked") or merges.get("stuck"))),
                      hint="good-to-merge rule, oldest sign-off first"))
 
     # Ready

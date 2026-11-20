@@ -209,11 +209,12 @@ MERGE_RC=$?
 MERGE_SUMMARY="$(sed -n 's/^SUMMARY //p' <<<"$MERGE_OUT" | tail -1)"
 if [[ -n "$MERGE_SUMMARY" ]]; then
   printf '{"ts":"%s","phase":"repo","msg":"merge queue: %s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    "$(jq -r '"\(.merged) merged, \(.queued) queued, \(.failed) failed, \(.waiting) waiting"' <<<"$MERGE_SUMMARY")" >> progress.jsonl
+    "$(jq -r '"\(.merged) merged, \(.queued) queued, \(.failed) failed, \(.waiting) waiting" + (if (.stuck // 0) > 0 then ", \(.stuck) stuck" else "" end)' <<<"$MERGE_SUMMARY")" >> progress.jsonl
   jq -cn --arg ts "$TS" --argjson s "$MERGE_SUMMARY" \
     '{v:1,ts:$ts,actor:"system",via:"tick",event:"merge_queue",ok:($s.failed == 0),
       summary:("merge queue: " + ($s.merged|tostring) + " merged, " + ($s.queued|tostring) +
-        " queued, " + ($s.failed|tostring) + " failed, " + ($s.waiting|tostring) + " waiting"),
+        " queued, " + ($s.failed|tostring) + " failed, " + ($s.waiting|tostring) + " waiting" +
+        (if ($s.stuck // 0) > 0 then ", " + ($s.stuck|tostring) + " stuck" else "" end)),
       data:$s}' >> audit.jsonl
 else
   jq -cn --arg ts "$TS" --arg out "$(tail -c 300 <<<"$MERGE_OUT")" \
@@ -368,6 +369,12 @@ fi
 DUR=$(( $(date +%s) - START_EPOCH ))
 printf '{"v":1,"ts":"%s","actor":"system","via":"tick","event":"tick_done","ok":%s,"summary":"tick finished (rc=%s, %sm)","data":{"rc":%s,"engine":"%s","duration_ms":%s}}\n' \
   "$TS" "$([[ $RC -eq 0 ]] && echo true || echo false)" "$RC" "$(( DUR / 60 ))" "$RC" "$ENGINE" "$(( DUR * 1000 ))" >> audit.jsonl
+
+# Render again now that this tick's outcome and activity are in audit.jsonl:
+# the render above ran before them, so its briefing and "Last tick" panel
+# still described the previous tick.
+python3 render_dashboard.py 2>>logs/tick.log ||
+  echo "=== tick $TS final dashboard render failed ===" >> logs/tick.log
 
 if [[ $RC -eq 0 ]]; then
   DONE_MSG="tick complete"

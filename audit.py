@@ -25,7 +25,11 @@ Events:
   decision_recorded  maintainer typed a free-text decision;
                      data.decision_ts identifies it (= its decisions.jsonl ts)
   decision_executed  the decision executor carried a decision out
-  terminal           explicit maintainer merge/close executed via /api/terminal
+  terminal           explicit maintainer merge/close executed via /api/terminal,
+                     or a good-to-merge squash that GitHub reports merged
+  merge_attempt      good-to-merge queue updated a branch, queued auto-merge,
+                     or failed. ok is that GitHub call, not proof of a merge;
+                     data.action is update-branch, auto-merge, or merge
   config_change      mode / schedule / limits / watch changed from the dashboard
   tick_requested     maintainer started a tick from the dashboard
   tick_cancelled     maintainer stopped a running tick from the dashboard

@@ -6,6 +6,7 @@ work/
 metrics.jsonl
 escalations.md
 approvals.jsonl
+merges.jsonl
 usage.jsonl
 progress.jsonl
 uptime.jsonl

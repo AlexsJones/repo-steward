@@ -218,6 +218,12 @@ holding them. Sweeps, evaluations and builds never block a merge.
 (click a repo to focus every panel on it; the orange number is how many items
 need you there) and a row filter (<kbd>/</kbd>). Its panels:
 
+- **Daily briefing**: pinned above everything else and rewritten after each
+  tick. It lists only what needs you, most urgent first: a failed tick and how
+  to fix it, a site that is down, decisions, CI runs to approve, failed merges,
+  PRs waiting for your merge, staged replies and broken builds. Each row links
+  to the items and to its panel; the last line says what the steward handled
+  without you.
 - **Decisions needed**: each escalation has a command line. Type what you
   want done and press Enter. See [Decisions & approvals](#decisions--approvals).
 - **Ready for your final look**: the recommend-to-merge shortlist, checked live
@@ -279,16 +285,16 @@ every action lands in the `approvals.jsonl` audit trail:
 `merge_ready.py` merges without a click, under one standing rule you record
 as a decision: squash-merge a PR when the steward's latest review is an
 approval **on the current head** that ends "Good to merge", GitHub's review
-decision is APPROVED, every check is green, the branch merges cleanly, and it
-is not a critical feature change. A title starting `feat` or marked breaking
-(`!`), or a major-version dependency bump, stays with you.
+decision is APPROVED, every check is green, the branch merges cleanly, and
+the title is not breaking (`!`) and not a major-version dependency bump. A
+`feat` title merges when the steward signed it off (decision 2026-10-24).
 
 Every tick works this rule as a **merge queue**. After the agent finishes,
 `tick.sh` runs `merge_ready.py --tick`, which lines up every eligible PR
 oldest sign-off first and acts on at most `limits.merges_per_tick` of them
 (default 30; `0` turns the phase off). The rest wait for the next tick. In
 draft mode the queue is reported but nothing merges. The last run's queue
-(merged, queued, failed, waiting and skipped, each with its reason) is kept in
+(merged, queued, failed, stuck, waiting and skipped, each with its reason) is kept in
 `merge_queue.json`, and a `merge_queue` summary event is written to the audit
 log. The merge phase needs no model, so it still runs when the engine fails.
 
@@ -304,8 +310,14 @@ It uses `gh` only, with no model and no token cost. Run by hand, it refuses to
 run during a tick or decision run. A branch behind a strict-protection base is updated
 first. Where the repository allows it, GitHub auto-merge then finishes once
 checks pass; otherwise the next run merges it (it remembers the update commit
-in `.merge_ready_updates.json`, so the approval still counts). Every merge is
-logged to `approvals.jsonl` and `audit.jsonl`. Because the phrase now
+in `.merge_ready_updates.json`, so the approval still counts). A confirmed
+merge is a `terminal` audit event with `data.action` `merge`, and a row in
+`merges.jsonl`. A branch update or queued auto-merge is a `merge_attempt`
+with `ok` meaning that GitHub call succeeded, not that the PR merged. The
+same attempts are appended to `approvals.jsonl` (`merged` is the flag that
+means GitHub reported the PR merged). Two consecutive failures on one PR
+land in `merge_queue.json` under `stuck` for the next tick to escalate once.
+PRs that touch the same files are merged one per tick. Because the phrase now
 triggers a merge, the steward reserves "Good to merge" for PRs that truly are.
 
 ### The decision log
@@ -509,7 +521,7 @@ running install generates is gitignored (per-maintainer state). The tracked set:
 | `signals.py` | deterministic, deduplicating evidence collector for repository insights | yes |
 | `insights.py` · `INSIGHTS.md` · `insights.sh` | GitHub fetch, ranking playbook, and validated publish for the build-candidate sweep | yes |
 | `builds.py` · `BUILD.md` · `build.sh` | the Build button's queue, playbook, and runner (implements a theme, opens a PR) | yes |
-| `merge_ready.py` | squash-merges PRs the steward signed off "Good to merge" that are not feature changes, oldest sign-off first (`--merge`, `--limit N`; dry run by default; `--tick` is the tick's merge queue) | yes |
+| `merge_ready.py` | squash-merges PRs the steward signed off "Good to merge" that are not breaking changes or major bumps, oldest sign-off first, one overlapping PR per tick (`--merge`, `--limit N`; dry run by default; `--tick` is the tick's merge queue) | yes |
 | `proactive.py` | retired idea-canvas queue; ticks still honour items already in `proactive.json` | yes |
 | `evaluation.py` · `EVALUATION.md` · `evaluate.sh` | critically compare prior judgments with later outcomes and derive lessons | yes |
 | `insights.html` · `evaluation.html` · `metrics.html` · `audit.html` | build candidates, self-evaluation, metrics, and decision-log pages | yes |
