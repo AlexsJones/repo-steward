@@ -61,7 +61,9 @@ Every finding needs at least two real signal IDs including a steward event.
 Every lesson must cite a finding from this evaluation. Use `_portfolio` only
 for a pattern genuinely supported across repositories. At most eight
 dimensions, twenty findings, and twelve lessons. Use `insufficient-data`
-freely; never manufacture a learning signal from routine activity.
+freely; never manufacture a learning signal from routine activity. A dimension
+with status `insufficient-data` may use an empty `signal_ids` list. Every
+other dimension needs at least one real signal ID.
 Repository-specific findings may cite only signals from that repository. If a
 comparison with another repository is necessary evidence, scope the finding to
 `_portfolio`; do not attach comparative signals to a repository-scoped claim.

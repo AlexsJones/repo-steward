@@ -76,7 +76,7 @@ evaluate: ## Critically evaluate prior steward judgments and derive lessons
 	bash evaluate.sh
 
 test: ## Run the deterministic runner/ledger tests
-	python3 -m unittest -v test_tick_guard.py test_insights_builds.py test_work_status.py test_merge_queue.py
+	python3 -m unittest -v test_tick_guard.py test_insights_builds.py test_work_status.py test_merge_queue.py test_evaluation.py
 
 uninstall: ## Disable and stop every steward unit
 	-$(SC) disable --now $(TIMER) $(DASH) $(UPTIME) $(SVC)

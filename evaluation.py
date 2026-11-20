@@ -37,8 +37,35 @@ def read_json(path: Path, default):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def compact_signal(record: dict) -> dict:
+    """Keep evaluation context bounded while retaining IDs and source provenance.
+
+    Insights no longer compacts the signal log; evaluation owns this shaping.
+    """
+    out = {key: record.get(key) for key in ("id", "ts", "kind", "repo", "subject", "source")}
+    out["attributes"] = record.get("attributes") or {}
+    if record.get("analysis"):
+        out["analysis"] = record["analysis"]
+    evidence = []
+    for item in (record.get("evidence") or [])[:2]:
+        if not isinstance(item, dict):
+            continue
+        ev = {key: item.get(key) for key in ("type", "url", "label") if item.get(key)}
+        if item.get("text"):
+            ev["text"] = str(item["text"])[:2000]
+        comments = []
+        for comment in (item.get("recent_comments") or [])[-2:]:
+            if isinstance(comment, dict):
+                comments.append({**comment, "text": str(comment.get("text", ""))[:1000]})
+        if comments:
+            ev["recent_comments"] = comments
+        evidence.append(ev)
+    out["evidence"] = evidence
+    return out
+
+
 def compact_evaluation_signal(row: dict) -> dict:
-    out = insights.compact_signal(row)
+    out = compact_signal(row)
     workflow = row.get("workflow") or {}
     if workflow:
         compact = {key: str(workflow[key])[:700]
@@ -141,10 +168,16 @@ def validate(candidate: dict, records: list[dict], configured: set[str]) -> tupl
         status = dimension.get("status")
         if status not in POSTURES:
             raise InvalidEvaluation(f"{path}.status must be one of {sorted(POSTURES)}")
+        # An empty area is a valid result. Requiring a citation there forces a
+        # manufactured signal, which the playbook forbids.
+        minimum = 0 if status == "insufficient-data" else 1
+        raw_ids = dimension.get("signal_ids")
+        if raw_ids is None and minimum == 0:
+            raw_ids = []
         dimensions.append({"key": key, "title": text(dimension.get("title"), f"{path}.title", 200),
                            "status": status, "summary": text(dimension.get("summary"), f"{path}.summary"),
-                           "signal_ids": cited(dimension.get("signal_ids"), known, "_portfolio",
-                                               f"{path}.signal_ids")})
+                           "signal_ids": cited(raw_ids, known, "_portfolio",
+                                               f"{path}.signal_ids", minimum)})
     if len(dimensions) > 8:
         raise InvalidEvaluation("dimensions exceeds 8")
 
